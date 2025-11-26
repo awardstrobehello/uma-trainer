@@ -1,8 +1,6 @@
--- Table: public.support_cards
+-- I'll update this for more general sql implementations later.
 
--- DROP TABLE IF EXISTS public.support_cards;
-
-CREATE TABLE IF NOT EXISTS public.support_cards
+CREATE TABLE IF NOT EXISTS support_cards
 (
     id integer NOT NULL DEFAULT nextval('support_cards_id_seq'::regclass),
     name character varying(100) COLLATE pg_catalog."default" NOT NULL,
@@ -24,13 +22,27 @@ CREATE TABLE IF NOT EXISTS public.support_cards
     fan_bonus integer DEFAULT 0,
     hint_frequency integer DEFAULT 0,
     hint_level integer DEFAULT 0,
+    initial_speed integer DEFAULT 0,
+    initial_stamina integer DEFAULT 0,
+    initial_power integer DEFAULT 0,
+    initial_guts integer DEFAULT 0,
+    initial_wit integer DEFAULT 0,
+    failure_protection double precision DEFAULT 0,
+    energy_cost_reduction double precision DEFAULT 0,
     CONSTRAINT support_cards_pkey PRIMARY KEY (id),
     CONSTRAINT support_cards_type_check CHECK (type::text = ANY (ARRAY['Speed'::character varying, 'Stamina'::character varying, 'Power'::character varying, 'Guts'::character varying, 'Wit'::character varying, 'Friend'::character varying, 'Group'::character varying]::text[])),
     CONSTRAINT support_cards_rarity_check CHECK (rarity::text = ANY (ARRAY['R'::character varying, 'SR'::character varying, 'SSR'::character varying]::text[])),
     CONSTRAINT support_cards_limit_break_check CHECK (limit_break >= 0 AND limit_break <= 4)
 )
 
-TABLESPACE pg_default;
-
-ALTER TABLE IF EXISTS public.support_cards
-    OWNER to postgres;
+CREATE TABLE IF NOT EXISTS uma
+(
+    id integer NOT NULL DEFAULT nextval('uma_id_seq'::regclass),
+    name character varying(100) COLLATE pg_catalog."default" NOT NULL,
+    speed_bonus integer DEFAULT 0,
+    stamina_bonus integer DEFAULT 0,
+    power_bonus integer DEFAULT 0,
+    gut_bonus integer DEFAULT 0,
+    wit_bonus integer DEFAULT 0,
+    CONSTRAINT uma_pkey PRIMARY KEY (id)
+)
