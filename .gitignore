@@ -1,0 +1,38 @@
+# .NET Build
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.vscode/
+*.cache
+packages/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+
+# IDE
+*.swp
+*~
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+appsettings.Development.json
+*.env
+config.json
+
+# Logs, data
+*.log
+*.db
+*.sqlite
+*.dump
