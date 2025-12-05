@@ -171,8 +171,13 @@ def main():
     screenshot = capture_screen(save_debug=True)
 
     # TODO: create loop that selects region and runs template matching
-    # TODO: create new support images so size doesn't need to be altered
-        # especially given that I'm going to make new images for 16:9 
+        # wait i'm an idiot both aspect ratios are 16:9
+        # why would i waste so much time doing that
+        # just bring the new images down to 1920x1080 and then make a function to scale it back up
+
+    # TODO: adjust friendship_bar asset so that it fits into 1920x1080 
+        # all subsequent images will need to be scaled down
+    # TODO: create a scaling function
 
     screen_width, screen_height = screenshot.shape[1], screenshot.shape[0]
     region_type = "choice_region"
