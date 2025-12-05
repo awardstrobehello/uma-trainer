@@ -2,7 +2,9 @@ import cv2
 import numpy as np
 from mss import mss
 from PIL import Image
-
+import pyautogui
+import time
+import random
 # Sometimes template matching returns duplicate matches, false positives that are a few pixels off from the actual match    
 # This function removes them
 def remove_duplicates(matches, pixel_distance=5):
@@ -166,21 +168,148 @@ def debug_search_area(screenshot: np.ndarray, region: dict) -> None:
     )
     cv2.imwrite('test_images/region_visualization.png', screenshot)
 
+
+def scale_template(template: np.ndarray, screen_width: int, screen_height: int, base_width: int = 1920, base_height: int = 1080) -> np.ndarray:
+    # scales template image to match current screen resolution
+    
+    # Calculate scale factor based on width ratio (assuming the same aspect ratio)
+    scale_factor = screen_width / base_width
+    
+    h, w = template.shape[:2]
+    
+    new_width = int(w * scale_factor)
+    new_height = int(h * scale_factor)
+    
+    # Resize template
+    scaled_template = cv2.resize(template, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
+    
+    return scaled_template
+
+
+def relative_position_to_global(relative_x: int, relative_y: int, region: dict) -> tuple[int, int]:
+    # Convert relative coordinates (within a cropped region) to global coordinates (on full screenshot)
+    # relative_x: X coordinate relative to region (0 = left edge of region)
+    # relative_y: Y coordinate relative to region (0 = top edge of region)
+
+    global_x = region['x'] + relative_x
+    global_y = region['y'] + relative_y
+    return (global_x, global_y)
+
+
+def click_at_position(x: int, y: int, clicks: int = 1, delay: float = 0.1) -> None:
+    # global coordinates
+    random_delay = random.uniform(0.1, 0.325)
+    time.sleep(random_delay)
+    pyautogui.moveTo(x, y, duration=0.225)
+    pyautogui.click(clicks=clicks, interval=delay)
+
+
+def click_template_match(match: tuple[int, int], template: np.ndarray, region: dict, clicks: int = 1, click_center: bool = True) -> None:
+    # global coordinates
+    global_x, global_y = relative_position_to_global(match[0], match[1], region)
+    click_at_position(global_x, global_y, clicks=clicks)
+
+
+FRIENDSHIP_LEVEL = {
+    "gray": [120, 108, 110],
+    "blue": [255, 192, 42],
+    "green": [30, 230, 162],
+    "yellow": [30, 173, 255],
+    "max": [120, 235, 255],
+}
+
+def get_pixel_color(screenshot: np.ndarray, x: int, y: int) -> np.ndarray:
+    # Get BGR color of a pixel at global coordinates
+    return screenshot[y, x]  # OpenCV arrays are [height, width], so [y, x]
+
+
+def find_friendship_level(icon_match: tuple[int, int], template: np.ndarray, screenshot: np.ndarray, region: dict, screen_height: int, base_height: int = 1080) -> str:
+    # Reads color of the friendship bar to find the friendship level
+    # icon_match is (x, y) - top-left corner of match relative to cropped region
+    # template is the scaled template image to get width/height
+    
+    icon_x, icon_y = icon_match
+    template_h, template_w = template.shape[:2]
+    
+    # Calculate icon center relative to cropped region
+    icon_center_x = icon_x + template_w // 2
+    icon_center_y = icon_y + template_h // 2
+    
+    # Calculate friendship bar position offset (scales with resolution)
+    # Reference uses 66 pixels at 1080p
+    icon_to_friend_bar_distance = int(66 * (screen_height / base_height))
+    
+    # Convert to global coordinates
+    friendship_bar_x = region['x'] + icon_center_x
+    friendship_bar_y = region['y'] + icon_center_y + icon_to_friend_bar_distance
+    
+    color_bgr = get_pixel_color(screenshot, friendship_bar_x, friendship_bar_y)
+    closest_color = min(FRIENDSHIP_LEVEL.items(), 
+                       key=lambda item: np.linalg.norm(np.array(item[1]) - color_bgr))
+    
+    return closest_color[0]
+
+
 def main():
     select_monitor(monitor_index=None)    
     screenshot = capture_screen(save_debug=True)
 
-    # TODO: create loop that selects region and runs template matching
-        # wait i'm an idiot both aspect ratios are 16:9
-        # why would i waste so much time doing that
-        # just bring the new images down to 1920x1080 and then make a function to scale it back up
-
-    # TODO: adjust friendship_bar asset so that it fits into 1920x1080 
-        # all subsequent images will need to be scaled down
-    # TODO: create a scaling function
-
     screen_width, screen_height = screenshot.shape[1], screenshot.shape[0]
-    region_type = "choice_region"
+    # TODO: create loop that selects region and runs template matching
+
+    while True:
+        # State check. in training area?
+        region_type = "choice_region"
+        region_dict = get_search_region(screen_width, screen_height, region_type)
+        debug_search_area(screenshot.copy(), region_dict)
+        cropped_region = crop_region(screenshot, region_dict)
+
+        # Template matching
+        image_path = 'assets/buttons/training_btn.png'
+        target_icon = cv2.imread(image_path)
+        if target_icon is None:
+            raise FileNotFoundError(f"Could not load target icon: {image_path}")
+        template = scale_template(target_icon, screen_width, screen_height)
+
+        result = cv2.matchTemplate(cropped_region, template, cv2.TM_CCOEFF_NORMED)
+        confidence_threshold = 0.9
+        match_locations = np.where(result >= confidence_threshold)
+        matches = list(zip(*match_locations[::-1])) # converting match locations to (x, y) format
+        matches = remove_duplicates(matches)
+        if len(matches) > 0:
+            print("Training button found")
+        break
+    # Deleted time.sleep(3)
+
+    # Training area detection
+    screenshot = capture_screen(save_debug=True)
+    region_type = "training_region"
+    region_dict = get_search_region(screen_width, screen_height, region_type)
+    debug_search_area(screenshot.copy(), region_dict)
+    cropped_region = crop_region(screenshot, region_dict)
+    # Template matching
+    image_path = 'assets/icons/train_guts.png'
+
+    # TODO: make it greyscale since levels make it different colors
+
+    target_icon = cv2.imread(image_path)
+    if target_icon is None:
+        raise FileNotFoundError(f"Could not load target icon: {image_path}")
+    template = scale_template(target_icon, screen_width, screen_height)
+    result = cv2.matchTemplate(cropped_region, template, cv2.TM_CCOEFF_NORMED)
+    confidence_threshold = 0.9
+    match_locations = np.where(result >= confidence_threshold)
+    matches = list(zip(*match_locations[::-1])) # converting match locations to (x, y) format
+    matches = remove_duplicates(matches)
+    if len(matches) > 0:
+        print("Training type found")
+    else:
+        print("No training type found")
+
+
+    # Speed card detection (eventually all cards)    
+    screenshot = capture_screen(save_debug=True)
+    region_type = "support_region"
     region_dict = get_search_region(screen_width, screen_height, region_type)
 
     # DEBUG visualizes the search region with a box
@@ -194,10 +323,8 @@ def main():
     if target_icon is None:
         raise FileNotFoundError(f"Could not load target icon: {image_path}")
     
-    h, w = target_icon.shape[:2]
-
-    # temporary fix for icon detection - 1920x1080 to 2560x1440
-    template = cv2.resize(target_icon, (int(w * 1.333), int(h * 1.333)))
+    # Scale template to match current screen resolution
+    template = scale_template(target_icon, screen_width, screen_height)
 
     # Template matching on cropped region
     result = cv2.matchTemplate(cropped_region, template, cv2.TM_CCOEFF_NORMED)
@@ -212,6 +339,12 @@ def main():
     matches = remove_duplicates(matches)
 
     print(f"Found {len(matches)} icons at: {matches}")
+    for match in matches:
+        friendship_level = find_friendship_level(match, template, screenshot, region_dict, screen_height)
+        print(f"Friendship level for icon at {match}: {friendship_level}")
+    if len(matches) > 0:
+        click_template_match(matches[0], template, region_dict, clicks=1, click_center=True)
+
 
 if __name__ == "__main__":
     main()
