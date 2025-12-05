@@ -218,6 +218,15 @@ FRIENDSHIP_LEVEL = {
     "max": [120, 235, 255],
 }
 
+TRAINING_AREA = {
+    "speed": 'assets/icons/train_spd.png',
+    "stamina": "assets/icons/train_sta.png",
+    "power": "assets/icons/train_pwr.png",
+    "guts": "assets/icons/train_guts.png",
+    "wit": "assets/icons/train_wit.png",
+}
+
+
 def get_pixel_color(screenshot: np.ndarray, x: int, y: int) -> np.ndarray:
     # Get BGR color of a pixel at global coordinates
     return screenshot[y, x]  # OpenCV arrays are [height, width], so [y, x]
@@ -255,10 +264,10 @@ def main():
     screenshot = capture_screen(save_debug=True)
 
     screen_width, screen_height = screenshot.shape[1], screenshot.shape[0]
-    # TODO: create loop that selects region and runs template matching
+    # TODO: one run-through scan and calculation for training
 
     while True:
-        # State check. in training area?
+        # State check. in "choice" area? rest, infirmary, etc
         region_type = "choice_region"
         region_dict = get_search_region(screen_width, screen_height, region_type)
         debug_search_area(screenshot.copy(), region_dict)
@@ -271,6 +280,10 @@ def main():
             raise FileNotFoundError(f"Could not load target icon: {image_path}")
         template = scale_template(target_icon, screen_width, screen_height)
 
+        # this is really ugly
+        # doesn't help that it's repeated 3 times
+        # when it works I'll make a function for it
+        # TODO: make a nicer "image taking" function
         result = cv2.matchTemplate(cropped_region, template, cv2.TM_CCOEFF_NORMED)
         confidence_threshold = 0.9
         match_locations = np.where(result >= confidence_threshold)
@@ -278,33 +291,42 @@ def main():
         matches = remove_duplicates(matches)
         if len(matches) > 0:
             print("Training button found")
+            click_template_match(matches[0], template, region_dict, clicks=1, click_center=True)
+
         break
     # Deleted time.sleep(3)
 
+    # TODO: create flexible helper function that looks for templatesin a region and returns their position as dict
+
     # Training area detection
+    time.sleep(random.uniform(0.2, 0.4))
+
     screenshot = capture_screen(save_debug=True)
     region_type = "training_region"
     region_dict = get_search_region(screen_width, screen_height, region_type)
     debug_search_area(screenshot.copy(), region_dict)
     cropped_region = crop_region(screenshot, region_dict)
-    # Template matching
-    image_path = 'assets/icons/train_guts.png'
 
-    # TODO: make it greyscale since levels make it different colors
+    # Maybe I should create a part that waits until screen is loaded
+    for training_type, image_path in TRAINING_AREA.items():    
+        target_icon = cv2.imread(image_path)
+        if target_icon is None:
+            raise FileNotFoundError(f"Could not load target icon: {training_type}")
+        template = scale_template(target_icon, screen_width, screen_height)
+        result = cv2.matchTemplate(cropped_region, template, cv2.TM_CCOEFF_NORMED)
+        confidence_threshold = 0.9
+        match_locations = np.where(result >= confidence_threshold)
+        matches = list(zip(*match_locations[::-1])) # converting match locations to (x, y) format
+        matches = remove_duplicates(matches)
+        print(f"\nTraining type {training_type} position: {matches}")
 
-    target_icon = cv2.imread(image_path)
-    if target_icon is None:
-        raise FileNotFoundError(f"Could not load target icon: {image_path}")
-    template = scale_template(target_icon, screen_width, screen_height)
-    result = cv2.matchTemplate(cropped_region, template, cv2.TM_CCOEFF_NORMED)
-    confidence_threshold = 0.9
-    match_locations = np.where(result >= confidence_threshold)
-    matches = list(zip(*match_locations[::-1])) # converting match locations to (x, y) format
-    matches = remove_duplicates(matches)
-    if len(matches) > 0:
-        print("Training type found")
-    else:
-        print("No training type found")
+
+        if matches:
+            # click_template_match(matches[0], template, region_dict, clicks=1, click_center=True)
+
+            # to-implement. need to be careful about double-clicking and accidentally training
+        else:
+            raise RuntimeError(f"Training type {training_type} not found while trying to train")
 
 
     # Speed card detection (eventually all cards)    
