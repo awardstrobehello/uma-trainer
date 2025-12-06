@@ -108,33 +108,6 @@ def capture_screen(save_debug: bool = False) -> np.ndarray:
     
     return screenshot_bgr
 
-# Registry of search region definitions relative to screen dimensions
-# aka. DYNAMIC SEARCH REGIONS !!!!! 
-# Each function takes (width, height) 
-# returning a dict with x, y, width, height
-# since it's gonna be used all the time maybe a class would be better?
-# nah
-SEARCH_REGIONS = {
-    "support_region": lambda w, h: {
-        'x': int(w * 0.418),
-        'y': int(h * 0.13),
-        'width': int(w * 0.08),
-        'height': int(h * 0.6)
-    },
-    "training_region": lambda w, h: {
-        'x': int(w * 0.135),
-        'y': int(h * 0.703),
-        'width': int(w * 0.3),
-        'height': int(h * 0.2)
-    },
-    "choice_region": lambda w, h: { 
-        'x': int(w * 0.135),
-        'y': int(h * 0.71),
-        'width': int(w * 0.3),
-        'height': int(h * 0.22)
-    },
-    
-}
 
 
 def get_search_region(screen_width: int, screen_height: int, region_type: str) -> dict:
@@ -185,17 +158,6 @@ def scale_template(template: np.ndarray, screen_width: int, screen_height: int, 
     
     return scaled_template
 
-
-def relative_position_to_global(relative_x: int, relative_y: int, region: dict) -> tuple[int, int]:
-    # Convert relative coordinates (within a cropped region) to global coordinates (on full screenshot)
-    # relative_x: X coordinate relative to region (0 = left edge of region)
-    # relative_y: Y coordinate relative to region (0 = top edge of region)
-
-    global_x = region['x'] + relative_x
-    global_y = region['y'] + relative_y
-    return (global_x, global_y)
-
-
 def click_at_position(x: int, y: int) -> None:
     # global coordinates
     random_delay = random.uniform(0.1, 0.325)
@@ -213,12 +175,20 @@ def click_template_match(match: tuple[int, int], template: np.ndarray, region: d
         relative_x = relative_x + template_w // 2
         relative_y = relative_y + template_h // 2
     
-    global_x, global_y = relative_position_to_global(relative_x, relative_y, region)
+    global_x = region['x'] + relative_x
+    global_y = region['y'] + relative_y
+
     click_at_position(global_x, global_y)
 
 
-def find_template_in_region(template_path: str, screenshot: np.ndarray, region: dict, screen_width: int, screen_height: int, confidence_threshold: float = 0.9) -> tuple[list[tuple[int, int]], np.ndarray]:
-    # returns a tuple of (matches, template)
+def convert_to_grayscale(image: np.ndarray) -> np.ndarray:
+    if len(image.shape) == 3:
+        return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return image  # Already grayscale
+
+
+def find_template_in_region(template_path: str, screenshot: np.ndarray, region: dict, screen_width: int, screen_height: int, confidence_threshold: float = 0.7, use_grayscale: bool = False) -> tuple[list[tuple[int, int]], np.ndarray]:
+
     cropped_region = crop_region(screenshot, region)
     
     target_icon = cv2.imread(template_path)
@@ -226,16 +196,52 @@ def find_template_in_region(template_path: str, screenshot: np.ndarray, region: 
         raise FileNotFoundError(f"Could not load template: {template_path}")
     
     template = scale_template(target_icon, screen_width, screen_height)
-    result = cv2.matchTemplate(cropped_region, template, cv2.TM_CCOEFF_NORMED)
+    original_template = template.copy()  # Keep original for return value
+    
+    # Convert to grayscale if requested (for better matching when colors vary)
+    if use_grayscale:
+        cropped_region_gray = convert_to_grayscale(cropped_region)
+        template_gray = convert_to_grayscale(template)
+        result = cv2.matchTemplate(cropped_region_gray, template_gray, cv2.TM_CCOEFF_NORMED)
+    else:
+        result = cv2.matchTemplate(cropped_region, template, cv2.TM_CCOEFF_NORMED)
     match_locations = np.where(result >= confidence_threshold)
     matches = list(zip(*match_locations[::-1]))  # Convert to (x, y) format
     matches = remove_duplicates(matches)
-    if len(matches) == 0:
+    if "support_card_type" in template_path or "unity_training" in template_path:
+        return matches, original_template
+    elif len(matches) == 0:
         print(f"Max confidence was not enough: {result.max():.5f}")
-        print(f"Min confidence: {result.min():.5f}")
+    #     print(f"Min confidence: {result.min():.5f}")
     
-    return matches, template
+    return matches, original_template
 
+# Registry of search region definitions relative to screen dimensions
+# aka. DYNAMIC SEARCH REGIONS !!!!! 
+# Each function takes (width, height) 
+# returning a dict with x, y, width, height
+# since it's gonna be used all the time maybe a class would be better?
+# nah
+SEARCH_REGIONS = {
+    "support_region": lambda w, h: {
+        'x': int(w * 0.418),
+        'y': int(h * 0.13),
+        'width': int(w * 0.08),
+        'height': int(h * 0.6)
+    },
+    "training_region": lambda w, h: {
+        'x': int(w * 0.135),
+        'y': int(h * 0.703),
+        'width': int(w * 0.3),
+        'height': int(h * 0.2)
+    },
+    "choice_region": lambda w, h: { 
+        'x': int(w * 0.135),
+        'y': int(h * 0.71),
+        'width': int(w * 0.3),
+        'height': int(h * 0.22)
+    },
+}
 
 FRIENDSHIP_LEVEL = {
     "gray": [120, 108, 110],
@@ -252,6 +258,22 @@ TRAINING_AREA = {
     "guts": "assets/icons/train_guts.png",
     "wit": "assets/icons/train_wit.png",
 }
+
+SUPPORT_CARD_TYPES = {
+    "speed": "assets/icons/support_card_type_spd.png",
+    "stamina": "assets/icons/support_card_type_sta.png",
+    "power": "assets/icons/support_card_type_pow.png",
+    "guts": "assets/icons/support_card_type_guts.png",
+    "wit": "assets/icons/support_card_type_wit.png",
+    "friend": "assets/icons/support_card_type_friend.png",
+}
+
+UNITY_TRAINING_TYPES = {
+    "expired": "assets/icons/unity_expired_burst.png",
+    "training": "assets/icons/unity_training.png",
+    "burst": "assets/icons/unity_spirit_burst.png",
+}
+
 
 
 def get_pixel_color(screenshot: np.ndarray, x: int, y: int) -> np.ndarray:
@@ -300,60 +322,100 @@ def main():
 
     # Template matching for training button
     matches, template = find_template_in_region('assets/buttons/training_btn.png', screenshot, region_dict, screen_width, screen_height)
-    if matches is not None:
+    if len(matches) > 0:
         print("Training button found")
         click_template_match(matches[0], template, region_dict, click_center=True)
     
     # Training area detection
-    time.sleep(random.uniform(0.3, 0.4))
+    time.sleep(random.uniform(0.4, 0.5))
 
-    screenshot = capture_screen(save_debug=True)
-    region_type = "training_region"
-    region_dict = get_search_region(screen_width, screen_height, region_type)
-    cropped_region = crop_region(screenshot, region_dict)
     # debug_search_area(screenshot.copy(), region_dict)
 
     prev_value = 'speed' # this is the default value. if it's the same as the current value, don't click
-
-    results = {}
+    # TODO: make it click on speed first so there aren't any issues with matching
+    training_locations = {}
     
+    # In practice this only needs to be run once in the entire run, just to get the locations
+    # so training_locations will need to be a global variable
     for name, template_path in TRAINING_AREA.items():
-        matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height)
+        screenshot = capture_screen(save_debug=True)
+        region_type = "training_region"
+        region_dict = get_search_region(screen_width, screen_height, region_type)
+        cropped_region = crop_region(screenshot, region_dict)
+
+        # Use grayscale for training icons since they have different colors based on level
+        matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height, use_grayscale=True)
         count = 0
+
         if len(matches) == 0:
-            while len(matches) == 0:
-                matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height)
+            while len(matches) == 0: # sometimes it takes a few tries to find the training type
+                screenshot = capture_screen(save_debug=True)
+                region_type = "training_region"
+                region_dict = get_search_region(screen_width, screen_height, region_type)
+                cropped_region = crop_region(screenshot, region_dict)
+
+                # Use grayscale for training icons since they have different colors based on level
+                matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height, use_grayscale=True)
                 count += 1
                 if count > 10:
                     raise RuntimeError(f"Training type {name} not found after 10 attempts")
-        results[name] = (matches, template)
+        training_locations[name] = (matches, template)
         print(f"Training type {name} found at: {matches}")
 
 
-    # Maybe I should create a part that waits until screen is loaded
-        # if matches:
-        #     # if prev_value == training_type:
-        #     #     click_template_match(matches[0], template, region_dict, click_center=True)
-
-        #     # to-implement. need to be careful about double-clicking and accidentally training
-        # else:
-        #     raise RuntimeError(f"Training type {training_type} not found while trying to train")
-
-
-    # Speed card detection (eventually all cards)    
-    screenshot = capture_screen(save_debug=True)
+    # Support is in the same screenshot as training, so we don't need to capture a new one
     region_type = "support_region"
     region_dict = get_search_region(screen_width, screen_height, region_type)
+    cropped_region = crop_region(screenshot, region_dict)
 
-    # DEBUG visualizes the search region with a box
+    # The loop here will be run for each training type
+    # TODO: create spirit burst checker as well
+    for name, template_path in SUPPORT_CARD_TYPES.items():
+        matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height)
+        for match in matches:
+            friendship_level = find_friendship_level(match, template, screenshot, region_dict, screen_height)
+            print(f"Found {name} icon at: {match} with friendship level {friendship_level}")
+
+
+    # Collect all matches first and then filter overlaps
+    unity_matches = {}
+    unity_templates = {}
+
     debug_search_area(screenshot.copy(), region_dict)
 
-    matches, template = find_template_in_region('assets/icons/support_card_type_spd.png', screenshot, region_dict, screen_width, screen_height)
+    for name, template_path in UNITY_TRAINING_TYPES.items():
+        matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height, use_grayscale=True)
+        unity_matches[name] = matches
+        unity_templates[name] = template
+        print(f"Found {len(matches)} {name} unity icons at: {matches}")
 
-    print(f"Found {len(matches)} icons at: {matches}")
-    for match in matches:
-        friendship_level = find_friendship_level(match, template, screenshot, region_dict, screen_height)
-        print(f"Friendship level for icon at {match}: {friendship_level}")
+
+    # Remove "training" icons that overlap with "expired" icons (they're the same position)
+    if "expired" in unity_matches and "training" in unity_matches:
+        expired_positions = unity_matches["expired"]
+        training_positions = unity_matches["training"]
+        
+        # filter out training icons that're in the same position as expired icons
+        # Using pixel_distance to account for slight variations
+        filtered_training = []
+        for training_pos in training_positions:
+            is_overlapping = False
+            for expired_pos in expired_positions:
+                dx = abs(training_pos[0] - expired_pos[0])
+                dy = abs(training_pos[1] - expired_pos[1])
+                # If within 10 pixels consider it overlapping (same icon)
+                if dx < 10 and dy < 10:
+                    is_overlapping = True
+                    break
+            
+            if not is_overlapping:
+                filtered_training.append(training_pos)
+        
+        unity_matches["training"] = filtered_training
+        print(f"After removing overlaps: {len(filtered_training)} training unity icons remain")
+    for name, matches in unity_matches.items():
+        for match in matches:
+            print(f"Found {name} icon at: {match}")
 
 if __name__ == "__main__":
     main()
