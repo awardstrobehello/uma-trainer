@@ -196,18 +196,45 @@ def relative_position_to_global(relative_x: int, relative_y: int, region: dict) 
     return (global_x, global_y)
 
 
-def click_at_position(x: int, y: int, clicks: int = 1, delay: float = 0.1) -> None:
+def click_at_position(x: int, y: int) -> None:
     # global coordinates
     random_delay = random.uniform(0.1, 0.325)
     time.sleep(random_delay)
     pyautogui.moveTo(x, y, duration=0.225)
-    pyautogui.click(clicks=clicks, interval=delay)
+    pyautogui.click()
 
 
-def click_template_match(match: tuple[int, int], template: np.ndarray, region: dict, clicks: int = 1, click_center: bool = True) -> None:
-    # global coordinates
-    global_x, global_y = relative_position_to_global(match[0], match[1], region)
-    click_at_position(global_x, global_y, clicks=clicks)
+def click_template_match(match: tuple[int, int], template: np.ndarray, region: dict, click_center: bool = True) -> None:
+    relative_x, relative_y = match
+    
+    if click_center:
+        # Calculate center of template match
+        template_h, template_w = template.shape[:2]
+        relative_x = relative_x + template_w // 2
+        relative_y = relative_y + template_h // 2
+    
+    global_x, global_y = relative_position_to_global(relative_x, relative_y, region)
+    click_at_position(global_x, global_y)
+
+
+def find_template_in_region(template_path: str, screenshot: np.ndarray, region: dict, screen_width: int, screen_height: int, confidence_threshold: float = 0.9) -> tuple[list[tuple[int, int]], np.ndarray]:
+    # returns a tuple of (matches, template)
+    cropped_region = crop_region(screenshot, region)
+    
+    target_icon = cv2.imread(template_path)
+    if target_icon is None:
+        raise FileNotFoundError(f"Could not load template: {template_path}")
+    
+    template = scale_template(target_icon, screen_width, screen_height)
+    result = cv2.matchTemplate(cropped_region, template, cv2.TM_CCOEFF_NORMED)
+    match_locations = np.where(result >= confidence_threshold)
+    matches = list(zip(*match_locations[::-1]))  # Convert to (x, y) format
+    matches = remove_duplicates(matches)
+    if len(matches) == 0:
+        print(f"Max confidence was not enough: {result.max():.5f}")
+        print(f"Min confidence: {result.min():.5f}")
+    
+    return matches, template
 
 
 FRIENDSHIP_LEVEL = {
@@ -221,7 +248,7 @@ FRIENDSHIP_LEVEL = {
 TRAINING_AREA = {
     "speed": 'assets/icons/train_spd.png',
     "stamina": "assets/icons/train_sta.png",
-    "power": "assets/icons/train_pwr.png",
+    "power": "assets/icons/train_pow.png",
     "guts": "assets/icons/train_guts.png",
     "wit": "assets/icons/train_wit.png",
 }
@@ -258,7 +285,6 @@ def find_friendship_level(icon_match: tuple[int, int], template: np.ndarray, scr
     
     return closest_color[0]
 
-
 def main():
     select_monitor(monitor_index=None)    
     screenshot = capture_screen(save_debug=True)
@@ -266,67 +292,52 @@ def main():
     screen_width, screen_height = screenshot.shape[1], screenshot.shape[0]
     # TODO: one run-through scan and calculation for training
 
-    while True:
-        # State check. in "choice" area? rest, infirmary, etc
-        region_type = "choice_region"
-        region_dict = get_search_region(screen_width, screen_height, region_type)
-        debug_search_area(screenshot.copy(), region_dict)
-        cropped_region = crop_region(screenshot, region_dict)
+    # State check. in "choice" area? rest, infirmary, etc
+    region_type = "choice_region"
+    region_dict = get_search_region(screen_width, screen_height, region_type)
+    cropped_region = crop_region(screenshot, region_dict)
+    # debug_search_area(screenshot.copy(), region_dict)
 
-        # Template matching
-        image_path = 'assets/buttons/training_btn.png'
-        target_icon = cv2.imread(image_path)
-        if target_icon is None:
-            raise FileNotFoundError(f"Could not load target icon: {image_path}")
-        template = scale_template(target_icon, screen_width, screen_height)
-
-        # this is really ugly
-        # doesn't help that it's repeated 3 times
-        # when it works I'll make a function for it
-        # TODO: make a nicer "image taking" function
-        result = cv2.matchTemplate(cropped_region, template, cv2.TM_CCOEFF_NORMED)
-        confidence_threshold = 0.9
-        match_locations = np.where(result >= confidence_threshold)
-        matches = list(zip(*match_locations[::-1])) # converting match locations to (x, y) format
-        matches = remove_duplicates(matches)
-        if len(matches) > 0:
-            print("Training button found")
-            click_template_match(matches[0], template, region_dict, clicks=1, click_center=True)
-
-        break
-    # Deleted time.sleep(3)
-
-    # TODO: create flexible helper function that looks for templatesin a region and returns their position as dict
-
+    # Template matching for training button
+    matches, template = find_template_in_region('assets/buttons/training_btn.png', screenshot, region_dict, screen_width, screen_height)
+    if matches is not None:
+        print("Training button found")
+        click_template_match(matches[0], template, region_dict, click_center=True)
+    
     # Training area detection
-    time.sleep(random.uniform(0.2, 0.4))
+    time.sleep(random.uniform(0.3, 0.4))
 
     screenshot = capture_screen(save_debug=True)
     region_type = "training_region"
     region_dict = get_search_region(screen_width, screen_height, region_type)
-    debug_search_area(screenshot.copy(), region_dict)
     cropped_region = crop_region(screenshot, region_dict)
+    # debug_search_area(screenshot.copy(), region_dict)
+
+    prev_value = 'speed' # this is the default value. if it's the same as the current value, don't click
+
+    results = {}
+    
+    for name, template_path in TRAINING_AREA.items():
+        matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height)
+        count = 0
+        if len(matches) == 0:
+            while len(matches) == 0:
+                matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height)
+                count += 1
+                if count > 10:
+                    raise RuntimeError(f"Training type {name} not found after 10 attempts")
+        results[name] = (matches, template)
+        print(f"Training type {name} found at: {matches}")
+
 
     # Maybe I should create a part that waits until screen is loaded
-    for training_type, image_path in TRAINING_AREA.items():    
-        target_icon = cv2.imread(image_path)
-        if target_icon is None:
-            raise FileNotFoundError(f"Could not load target icon: {training_type}")
-        template = scale_template(target_icon, screen_width, screen_height)
-        result = cv2.matchTemplate(cropped_region, template, cv2.TM_CCOEFF_NORMED)
-        confidence_threshold = 0.9
-        match_locations = np.where(result >= confidence_threshold)
-        matches = list(zip(*match_locations[::-1])) # converting match locations to (x, y) format
-        matches = remove_duplicates(matches)
-        print(f"\nTraining type {training_type} position: {matches}")
+        # if matches:
+        #     # if prev_value == training_type:
+        #     #     click_template_match(matches[0], template, region_dict, click_center=True)
 
-
-        if matches:
-            # click_template_match(matches[0], template, region_dict, clicks=1, click_center=True)
-
-            # to-implement. need to be careful about double-clicking and accidentally training
-        else:
-            raise RuntimeError(f"Training type {training_type} not found while trying to train")
+        #     # to-implement. need to be careful about double-clicking and accidentally training
+        # else:
+        #     raise RuntimeError(f"Training type {training_type} not found while trying to train")
 
 
     # Speed card detection (eventually all cards)    
@@ -337,36 +348,12 @@ def main():
     # DEBUG visualizes the search region with a box
     debug_search_area(screenshot.copy(), region_dict)
 
-    cropped_region = crop_region(screenshot, region_dict)
-    
-    # Load and prepare template for matching
-    image_path = 'assets/icons/support_card_type_spd.png'
-    target_icon = cv2.imread(image_path)
-    if target_icon is None:
-        raise FileNotFoundError(f"Could not load target icon: {image_path}")
-    
-    # Scale template to match current screen resolution
-    template = scale_template(target_icon, screen_width, screen_height)
-
-    # Template matching on cropped region
-    result = cv2.matchTemplate(cropped_region, template, cv2.TM_CCOEFF_NORMED)
-    confidence_threshold = 0.9
-    match_locations = np.where(result >= confidence_threshold)
-    
-    matches = list(zip(*match_locations[::-1])) # converting match locations to (x, y) format
-
-    print(f"Max confidence: {result.max():.5f}")
-    print(f"Min confidence: {result.min():.5f}")
-    
-    matches = remove_duplicates(matches)
+    matches, template = find_template_in_region('assets/icons/support_card_type_spd.png', screenshot, region_dict, screen_width, screen_height)
 
     print(f"Found {len(matches)} icons at: {matches}")
     for match in matches:
         friendship_level = find_friendship_level(match, template, screenshot, region_dict, screen_height)
         print(f"Friendship level for icon at {match}: {friendship_level}")
-    if len(matches) > 0:
-        click_template_match(matches[0], template, region_dict, clicks=1, click_center=True)
-
 
 if __name__ == "__main__":
     main()
