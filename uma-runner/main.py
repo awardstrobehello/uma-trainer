@@ -275,7 +275,6 @@ UNITY_TRAINING_TYPES = {
 }
 
 
-
 def get_pixel_color(screenshot: np.ndarray, x: int, y: int) -> np.ndarray:
     # Get BGR color of a pixel at global coordinates
     return screenshot[y, x]  # OpenCV arrays are [height, width], so [y, x]
@@ -307,12 +306,130 @@ def find_friendship_level(icon_match: tuple[int, int], template: np.ndarray, scr
     
     return closest_color[0]
 
+
+class TrainingLocations:
+#     Stores training type locations detected once at startup.
+#     So re-detecting them is unnecessary
+    
+    def __init__(self):
+        self.locations: dict[str, tuple[list[tuple[int, int]], np.ndarray]] = {}
+        self.region_dict: dict | None = None
+        self._initialized = False
+    
+    def detect_all(self, screen_width: int, screen_height: int) -> None:
+        # Called once at startup to detect all training type locations
+        # Converts relative coordinates to global coordinates and stores them
+
+        region_type = "training_region"
+        self.region_dict = get_search_region(screen_width, screen_height, region_type)
+        
+        for name, template_path in TRAINING_AREA.items():
+            screenshot = capture_screen(save_debug=True)
+            
+            # Grayscale for training icons - different colors based on level
+            matches, template = find_template_in_region(template_path, screenshot, self.region_dict, 
+                                                       screen_width, screen_height, use_grayscale=True)
+            count = 0
+
+            if len(matches) == 0:
+                while len(matches) == 0:  # sometimes it takes a few tries to find the training type
+                    screenshot = capture_screen(save_debug=False)
+                    matches, template = find_template_in_region(template_path, screenshot, self.region_dict, 
+                                                               screen_width, screen_height, use_grayscale=True)
+                    count += 1
+                    if count > 10:
+                        raise RuntimeError(f"Training type {name} not found after 10 attempts")
+            
+            # Convert relative coordinates to global coordinates (center of template)
+            template_h, template_w = template.shape[:2]
+            global_matches = []
+            for relative_x, relative_y in matches:
+                # Calculate center of template match
+                relative_x = relative_x + template_w // 2
+                relative_y = relative_y + template_h // 2
+                
+                # Convert to global coordinates
+                global_x = self.region_dict['x'] + relative_x
+                global_y = self.region_dict['y'] + relative_y
+                global_matches.append((global_x, global_y))
+            
+            self.locations[name] = (global_matches, template)
+            print(f"Training type {name} found")
+            # print(f"Locations: {global_matches}")
+        
+        self._initialized = True
+    
+    def get_location(self, training_type: str) -> tuple[list[tuple[int, int]], np.ndarray] | None:
+        # Returns stored location (global coordinates, center of template) and template for a training type
+        if not self._initialized:
+            raise RuntimeError("TrainingLocations not initialized. Call detect_all() first.")
+        return self.locations.get(training_type)
+
+
+def drag_through_training_types(training_locations: TrainingLocations) -> None:
+    # Drags through all training types by clicking and holding on the leftmost training type
+    # and dragging through all training types in order (left to right)
+    
+    if not training_locations._initialized:
+        raise RuntimeError("TrainingLocations not initialized. Call detect_all() first.")
+    
+    # Collect all training type locations with their global coordinates
+    all_locations: list[tuple[int, int, str]] = []  # (x, y, training_type)
+    
+    for training_type in TRAINING_AREA.keys():
+        location_data = training_locations.get_location(training_type)
+        if location_data is not None:
+            global_matches, _ = location_data
+            if len(global_matches) > 0:
+                # Use the first match for each training type (assuming one per type)
+                x, y = global_matches[0]
+                all_locations.append((x, y, training_type))
+    
+    if len(all_locations) == 0:
+        print("No training type locations found")
+        return
+    
+    # Sort by x-coordinate to get left-to-right order
+    all_locations.sort(key=lambda loc: loc[0])
+    
+    # Get the leftmost location (start position)
+    start_x, start_y, start_type = all_locations[0]
+    print(f"Starting drag at {start_type} location: ({start_x}, {start_y})")
+    
+    # Get remaining locations for dragging (excluding the start)
+    drag_locations = [(x, y) for x, y, _ in all_locations[1:]]
+    
+    if len(drag_locations) == 0:
+        print("Only one training type found, no drag needed")
+        return
+    
+    # Move to start position
+    random_delay = random.uniform(0.1, 0.325)
+    time.sleep(random_delay)
+    pyautogui.moveTo(start_x, start_y, duration=0.225)
+    
+    # Begin click hold
+    pyautogui.mouseDown()
+    
+    # Drag through all remaining locations
+    for x, y in drag_locations:
+        # TODO: make it check the supports to calculate
+        random_delay = random.uniform(0.05, 0.125)
+        time.sleep(random_delay)
+        pyautogui.moveTo(x, y, duration=0.1)
+    
+    # Release mouse button
+    random_delay = random.uniform(0.05, 0.1)
+    time.sleep(random_delay)
+    pyautogui.mouseUp()
+    
+    print(f"Completed drag through {len(all_locations)} training types")
+        
 def main():
     select_monitor(monitor_index=None)    
     screenshot = capture_screen(save_debug=True)
 
     screen_width, screen_height = screenshot.shape[1], screenshot.shape[0]
-    # TODO: one run-through scan and calculation for training
 
     # State check. in "choice" area? rest, infirmary, etc
     region_type = "choice_region"
@@ -325,43 +442,14 @@ def main():
     if len(matches) > 0:
         print("Training button found")
         click_template_match(matches[0], template, region_dict, click_center=True)
-    
-    # Training area detection
     time.sleep(random.uniform(0.4, 0.5))
-
-    # debug_search_area(screenshot.copy(), region_dict)
-
-    prev_value = 'speed' # this is the default value. if it's the same as the current value, don't click
-    # TODO: make it click on speed first so there aren't any issues with matching
-    training_locations = {}
     
-    # In practice this only needs to be run once in the entire run, just to get the locations
-    # so training_locations will need to be a global variable
-    for name, template_path in TRAINING_AREA.items():
-        screenshot = capture_screen(save_debug=True)
-        region_type = "training_region"
-        region_dict = get_search_region(screen_width, screen_height, region_type)
-        cropped_region = crop_region(screenshot, region_dict)
-
-        # Use grayscale for training icons since they have different colors based on level
-        matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height, use_grayscale=True)
-        count = 0
-
-        if len(matches) == 0:
-            while len(matches) == 0: # sometimes it takes a few tries to find the training type
-                screenshot = capture_screen(save_debug=True)
-                region_type = "training_region"
-                region_dict = get_search_region(screen_width, screen_height, region_type)
-                cropped_region = crop_region(screenshot, region_dict)
-
-                # Use grayscale for training icons since they have different colors based on level
-                matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height, use_grayscale=True)
-                count += 1
-                if count > 10:
-                    raise RuntimeError(f"Training type {name} not found after 10 attempts")
-        training_locations[name] = (matches, template)
-        print(f"Training type {name} found at: {matches}")
-
+    # debug_search_area(screenshot.copy(), region_dict)
+    
+    # Detect all training locations once - only needs to be called once per run
+    training_locations = TrainingLocations()
+    training_locations.detect_all(screen_width, screen_height)
+    drag_through_training_types(training_locations)
 
     # Support is in the same screenshot as training, so we don't need to capture a new one
     region_type = "support_region"
@@ -369,7 +457,6 @@ def main():
     cropped_region = crop_region(screenshot, region_dict)
 
     # The loop here will be run for each training type
-    # TODO: create spirit burst checker as well
     for name, template_path in SUPPORT_CARD_TYPES.items():
         matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height)
         for match in matches:
