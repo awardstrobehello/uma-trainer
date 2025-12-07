@@ -366,7 +366,7 @@ class TrainingLocations:
         return self.locations.get(training_type)
 
 
-def drag_through_training_types(training_locations: TrainingLocations) -> None:
+def drag_through_training_types(training_locations: TrainingLocations, screen_width: int, screen_height: int) -> None:
     # Drags through all training types by clicking and holding on the leftmost training type
     # and dragging through all training types in order (left to right)
     
@@ -394,15 +394,8 @@ def drag_through_training_types(training_locations: TrainingLocations) -> None:
     
     # Get the leftmost location (start position)
     start_x, start_y, start_type = all_locations[0]
-    print(f"Starting drag at {start_type} location: ({start_x}, {start_y})")
-    
-    # Get remaining locations for dragging (excluding the start)
-    drag_locations = [(x, y) for x, y, _ in all_locations[1:]]
-    
-    if len(drag_locations) == 0:
-        print("Only one training type found, no drag needed")
-        return
-    
+    print(f"Starting drag at {start_type}: ({start_x}, {start_y})")
+       
     # Move to start position
     random_delay = random.uniform(0.1, 0.325)
     time.sleep(random_delay)
@@ -412,18 +405,36 @@ def drag_through_training_types(training_locations: TrainingLocations) -> None:
     pyautogui.mouseDown()
     
     # Drag through all remaining locations
-    for x, y in drag_locations:
-        # TODO: make it check the supports to calculate
+    for x, y, training_type in all_locations:
+        # TODO: add unity stuff
+        # TODO: create calculator for which training facility to click on
+        # Will also need to check energy to see if rest is needed
         random_delay = random.uniform(0.05, 0.125)
         time.sleep(random_delay)
         pyautogui.moveTo(x, y, duration=0.1)
+        print(f"\n{training_type}: ", end="")
+
+        # In the case where it doesn't start in speed (often)
+        screenshot = capture_screen(save_debug=True)
+        region_type = "support_region"
+        region_dict = get_search_region(screen_width, screen_height, region_type)
+        cropped_region = crop_region(screenshot, region_dict)
+
+        # Support detection loop
+        for name, template_path in SUPPORT_CARD_TYPES.items():
+            matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height)
+            for match in matches:
+                friendship_level = find_friendship_level(match, template, screenshot, region_dict, screen_height)
+                print(f"{name} friendship {friendship_level} | ", end="")
+                # print(f"Location: {match}")
+
     
     # Release mouse button
     random_delay = random.uniform(0.05, 0.1)
     time.sleep(random_delay)
     pyautogui.mouseUp()
     
-    print(f"Completed drag through {len(all_locations)} training types")
+    print(f"Completed drag")
         
 def main():
     select_monitor(monitor_index=None)    
@@ -449,20 +460,7 @@ def main():
     # Detect all training locations once - only needs to be called once per run
     training_locations = TrainingLocations()
     training_locations.detect_all(screen_width, screen_height)
-    drag_through_training_types(training_locations)
-
-    # Support is in the same screenshot as training, so we don't need to capture a new one
-    region_type = "support_region"
-    region_dict = get_search_region(screen_width, screen_height, region_type)
-    cropped_region = crop_region(screenshot, region_dict)
-
-    # The loop here will be run for each training type
-    for name, template_path in SUPPORT_CARD_TYPES.items():
-        matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height)
-        for match in matches:
-            friendship_level = find_friendship_level(match, template, screenshot, region_dict, screen_height)
-            print(f"Found {name} icon at: {match} with friendship level {friendship_level}")
-
+    drag_through_training_types(training_locations, screen_width, screen_height)
 
     # Collect all matches first and then filter overlaps
     unity_matches = {}
