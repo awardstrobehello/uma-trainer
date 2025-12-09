@@ -187,7 +187,7 @@ def convert_to_grayscale(image: np.ndarray) -> np.ndarray:
     return image  # Already grayscale
 
 
-def find_template_in_region(template_path: str, screenshot: np.ndarray, region: dict, screen_width: int, screen_height: int, confidence_threshold: float = 0.7, use_grayscale: bool = False) -> tuple[list[tuple[int, int]], np.ndarray]:
+def find_template_in_region(template_path: str, screenshot: np.ndarray, region: dict, screen_width: int, screen_height: int, confidence_threshold: float = 0.8, use_grayscale: bool = False) -> tuple[list[tuple[int, int]], np.ndarray]:
 
     cropped_region = crop_region(screenshot, region)
     
@@ -247,7 +247,7 @@ FRIENDSHIP_LEVEL = {
     "gray": [120, 108, 110],
     "blue": [255, 192, 42],
     "green": [30, 230, 162],
-    "yellow": [30, 173, 255],
+    "orange": [30, 173, 255],
     "max": [120, 235, 255],
 }
 
@@ -397,8 +397,6 @@ def drag_through_training_types(training_locations: TrainingLocations, screen_wi
     print(f"Starting drag at {start_type}: ({start_x}, {start_y})")
        
     # Move to start position
-    random_delay = random.uniform(0.1, 0.325)
-    time.sleep(random_delay)
     pyautogui.moveTo(start_x, start_y, duration=0.225)
     
     # Begin click hold
@@ -406,19 +404,17 @@ def drag_through_training_types(training_locations: TrainingLocations, screen_wi
     
     # Drag through all remaining locations
     for x, y, training_type in all_locations:
-        # TODO: add unity stuff
-        # TODO: create calculator for which training facility to click on
-        # Will also need to check energy to see if rest is needed
-        random_delay = random.uniform(0.05, 0.125)
-        time.sleep(random_delay)
-        pyautogui.moveTo(x, y, duration=0.1)
-        print(f"\n{training_type}: ", end="")
+        # TODO: create calculator for decision making
+        # TODO: check energy to see if rest is needed
+        # TODO: check infirmary to see if it's needed
+        pyautogui.moveTo(x, y, duration=0.001)
+        print(f"{training_type}: ", end="")
 
-        # In the case where it doesn't start in speed (often)
         screenshot = capture_screen(save_debug=True)
         region_type = "support_region"
         region_dict = get_search_region(screen_width, screen_height, region_type)
         cropped_region = crop_region(screenshot, region_dict)
+        # debug_search_area(screenshot.copy(), region_dict)
 
         # Support detection loop
         for name, template_path in SUPPORT_CARD_TYPES.items():
@@ -427,11 +423,48 @@ def drag_through_training_types(training_locations: TrainingLocations, screen_wi
                 friendship_level = find_friendship_level(match, template, screenshot, region_dict, screen_height)
                 print(f"{name} friendship {friendship_level} | ", end="")
                 # print(f"Location: {match}")
+        print()
+
+        # Unity training types detection
+        unity_matches = {}
+        unity_templates = {}
+        
+        for name, template_path in UNITY_TRAINING_TYPES.items():
+            matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height, use_grayscale=False)
+            unity_matches[name] = matches
+            unity_templates[name] = template
+            print(f"Found {len(matches)} {name} unity icons at: {matches}")
+
+        # Remove "training" icons that overlap with "expired" icons (they're the same position)
+        if "expired" in unity_matches and "training" in unity_matches:
+            expired_positions = unity_matches["expired"]
+            training_positions = unity_matches["training"]
+            
+            # filter out training icons that're in the same position as expired icons
+            # Using pixel_distance to account for slight variations
+            filtered_training = []
+            for training_pos in training_positions:
+                is_overlapping = False
+                for expired_pos in expired_positions:
+                    dx = abs(training_pos[0] - expired_pos[0])
+                    dy = abs(training_pos[1] - expired_pos[1])
+                    # If within 10 pixels consider it overlapping (same icon)
+                    if dx < 10 and dy < 10:
+                        is_overlapping = True
+                        break
+                
+                if not is_overlapping:
+                    filtered_training.append(training_pos)
+            
+            unity_matches["training"] = filtered_training
+            print(f"After removing overlaps: {len(filtered_training)} training unity icons remain")
+        # for name, matches in unity_matches.items():
+        #     for match in matches:
+        #         print(f"Found {name} icon at: {match}")
+        print()
 
     
     # Release mouse button
-    random_delay = random.uniform(0.05, 0.1)
-    time.sleep(random_delay)
     pyautogui.mouseUp()
     
     print(f"Completed drag")
@@ -453,7 +486,6 @@ def main():
     if len(matches) > 0:
         print("Training button found")
         click_template_match(matches[0], template, region_dict, click_center=True)
-    time.sleep(random.uniform(0.4, 0.5))
     
     # debug_search_area(screenshot.copy(), region_dict)
     
@@ -461,46 +493,6 @@ def main():
     training_locations = TrainingLocations()
     training_locations.detect_all(screen_width, screen_height)
     drag_through_training_types(training_locations, screen_width, screen_height)
-
-    # Collect all matches first and then filter overlaps
-    unity_matches = {}
-    unity_templates = {}
-
-    debug_search_area(screenshot.copy(), region_dict)
-
-    for name, template_path in UNITY_TRAINING_TYPES.items():
-        matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height, use_grayscale=True)
-        unity_matches[name] = matches
-        unity_templates[name] = template
-        print(f"Found {len(matches)} {name} unity icons at: {matches}")
-
-
-    # Remove "training" icons that overlap with "expired" icons (they're the same position)
-    if "expired" in unity_matches and "training" in unity_matches:
-        expired_positions = unity_matches["expired"]
-        training_positions = unity_matches["training"]
-        
-        # filter out training icons that're in the same position as expired icons
-        # Using pixel_distance to account for slight variations
-        filtered_training = []
-        for training_pos in training_positions:
-            is_overlapping = False
-            for expired_pos in expired_positions:
-                dx = abs(training_pos[0] - expired_pos[0])
-                dy = abs(training_pos[1] - expired_pos[1])
-                # If within 10 pixels consider it overlapping (same icon)
-                if dx < 10 and dy < 10:
-                    is_overlapping = True
-                    break
-            
-            if not is_overlapping:
-                filtered_training.append(training_pos)
-        
-        unity_matches["training"] = filtered_training
-        print(f"After removing overlaps: {len(filtered_training)} training unity icons remain")
-    for name, matches in unity_matches.items():
-        for match in matches:
-            print(f"Found {name} icon at: {match}")
 
 if __name__ == "__main__":
     main()
