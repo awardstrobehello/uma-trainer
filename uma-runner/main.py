@@ -632,6 +632,8 @@ def drag_through_training_types_and_get_score(training_locations: TrainingLocati
         # debug_search_area(screenshot.copy(), region_dict)
 
         # Support detection loop
+        rainbow_count = 0
+        
         for name, template_path in SUPPORT_CARD_TYPES.items():
             matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height)
             for match in matches:
@@ -645,11 +647,14 @@ def drag_through_training_types_and_get_score(training_locations: TrainingLocati
 
                 # Rainbow bonus
                 if name == training_type and (friendship_level in ("max", "orange")):
-                    training_score_dict[training_type] += 2.2
-                    print(f"; rainbow + 2.2", end=" ")
+                    rainbow_count += 1
                 print()
 
-                # print(f"Location: {match}")
+        if rainbow_count > 0:
+            rainbow_add = round(2.3 ** rainbow_count, 3)
+            
+            training_score_dict[training_type] += rainbow_add
+            print(f"{rainbow_count} rainbows, so + {rainbow_add}")
 
         # Unity training types detection
         unity_matches = {}
@@ -671,7 +676,7 @@ def drag_through_training_types_and_get_score(training_locations: TrainingLocati
                         draw_rectangle=False
                     )
                     # print(f"{name}, position at {check_coords}: BGR{color_below.tolist()}", end=" | ")
-                    if color_below[2] < 100:
+                    if color_below[2] < 180:
                         training_score_dict[training_type] += 0
                         print(f"| | expired (0)", end="\n")
                     else:
@@ -722,10 +727,28 @@ def main():
 
     # returns energy level and max energy level
     energy_level, max_energy = check_energy_level(screenshot, screen_width, screen_height)
+
+    print("--------------------------------")
+
     # Show training score
     for name, score in training_score_dict.items():
             print(f"{name}: {score}")
-    #TODO: Check energy level before decision
+
+    #TODO: Flesh out decision logic for rest vs train
+    #TODO: Event checker logic
+    
+    # get max value of training score dict
+    best_location, max_score = max(training_score_dict.items(), key=lambda x: x[1])
+
+    # Wit is +1 for a reason
+    if energy_level < 50 and max_score < 3:
+        print("rest")
+        pyautogui.press("esc")
+        return
+    else:
+        print(f"train {best_location}")
+        # pyautogui.press("enter")
+        return
 
 
 if __name__ == "__main__":
