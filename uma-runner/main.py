@@ -197,7 +197,7 @@ def find_template_in_region(template_path: str, screenshot: np.ndarray, region: 
     
     template = scale_template(target_icon, screen_width, screen_height)
     original_template = template.copy()  # Keep original for return value
-    
+     
     # Convert to grayscale if requested (for better matching when colors vary)
     if use_grayscale:
         cropped_region_gray = convert_to_grayscale(cropped_region)
@@ -210,8 +210,8 @@ def find_template_in_region(template_path: str, screenshot: np.ndarray, region: 
     matches = remove_duplicates(matches)
     if "support_card_type" in template_path or "unity_training" in template_path:
         return matches, original_template
-    elif len(matches) == 0:
-        print(f"Max confidence was not enough: {result.max():.5f}")
+    # elif len(matches) == 0:
+    #     print(f"Max confidence was not enough: {result.max():.5f}")
     #     print(f"Min confidence: {result.min():.5f}")
     
     return matches, original_template
@@ -241,6 +241,12 @@ SEARCH_REGIONS = {
         'width': int(w * 0.3),
         'height': int(h * 0.22)
     },
+    "energy_region": lambda w, h: {
+        'x': int(w * 0.227),
+        'y': int(h * 0.11),
+        'width': int(w * 0.2),
+        'height': int(h * 0.03)
+    },
 }
 
 FRIENDSHIP_LEVEL = {
@@ -269,15 +275,126 @@ SUPPORT_CARD_TYPES = {
 }
 
 UNITY_TRAINING_TYPES = {
-    "expired": "assets/icons/unity_expired_burst.png",
     "training": "assets/icons/unity_training.png",
     "burst": "assets/icons/unity_spirit_burst.png",
+    # "expired": "assets/icons/unity_expired_burst.png",
 }
 
+# base = total_supports + (non_max_friends * 0.5) + hint_bonus
+# speed and wit are usually heaviest - you need speed to win, wit to do more training
+# priority_bonus = 1 + PRIORITY_WEIGHT
 
 def get_pixel_color(screenshot: np.ndarray, x: int, y: int) -> np.ndarray:
     # Get BGR color of a pixel at global coordinates
     return screenshot[y, x]  # OpenCV arrays are [height, width], so [y, x]
+
+
+def count_pixels_of_color(screenshot: np.ndarray, region: dict, target_color_bgr: list[int], tolerance: int = 2) -> int:
+    # Count pixels in a region that match the target color (BGR format)
+    # target_color_bgr: [B, G, R] color to match
+    # tolerance: ±tolerance for color matching
+    
+    cropped = crop_region(screenshot, region)
+    
+    # Convert target color to numpy array (BGR format)
+    color = np.array(target_color_bgr, dtype=np.uint8)
+    
+    # Define min/max range with tolerance
+    color_min = np.clip(color - tolerance, 0, 255)
+    color_max = np.clip(color + tolerance, 0, 255)
+    
+    # Create mask for pixels within color range
+    mask = cv2.inRange(cropped, color_min, color_max)
+    
+    # Count non-zero pixels (matching pixels)
+    pixel_count = cv2.countNonZero(mask)
+    return pixel_count
+
+
+def check_energy_level(screenshot: np.ndarray, screen_width: int, screen_height: int, threshold: float = 0.85) -> tuple[float, float] | tuple[int, int]:
+    # Detects energy level by finding the right end of the energy bar and counting empty pixels
+    # Returns: (current_energy, max_energy) or (-1, -1) if detection fails
+    # 
+    # Method: Template match to find bar end → count gray pixels (empty energy) → calculate percentage
+    
+    region_type = "energy_region"
+    region_dict = get_search_region(screen_width, screen_height, region_type)
+    debug_search_area(screenshot.copy(), region_dict)
+
+
+
+    # Find the right end of the energy bar using template matching
+    # Try primary template first
+    matches, template = find_template_in_region(
+        "assets/ui/energy_bar_right_end_part.png",
+        screenshot,
+        region_dict,
+        screen_width,
+        screen_height,
+        confidence_threshold=threshold
+    )
+    
+    # If primary template fails, try alternative (different bar roundness)
+    if len(matches) == 0:
+        matches, template = find_template_in_region(
+            "assets/ui/energy_bar_right_end_part_2.png",
+            screenshot,
+            region_dict,
+            screen_width,
+            screen_height,
+            confidence_threshold=threshold
+        )
+    
+    if len(matches) == 0:
+        print("Warning: Could not find energy bar right end")
+        return -1, -1
+    
+    # Get template dimensions (already scaled to current resolution)
+    template_h, template_w = template.shape[:2]
+    
+    # Get the x position of the right end (first match)
+    # The match gives us the top-left corner, so right end is at x + template_width
+    right_end_x_relative, right_end_y_relative = matches[0]
+    right_end_x_relative = right_end_x_relative + template_w  # Actual right edge position
+    energy_bar_length = right_end_x_relative  # Length from left edge of region to right end
+    
+    # Calculate the middle vertical position of the energy bar for pixel counting
+    bar_middle_y_relative = right_end_y_relative + template_h // 2
+    
+    # Create region for counting empty energy pixels (gray color)
+    # Count from left edge of energy region to the right end
+    empty_energy_region = {
+        'x': region_dict['x'],
+        'y': region_dict['y'] + bar_middle_y_relative,
+        'width': energy_bar_length,
+        'height': 1  # Single pixel row for counting
+    }
+    
+    empty_energy_color_bgr = [117, 117, 117]
+    empty_energy_pixel_count = count_pixels_of_color(
+        screenshot,
+        empty_energy_region,
+        empty_energy_color_bgr,
+        tolerance=2
+    )
+    
+    # Calculate energy level
+    # Reference: 236 pixels = 100 energy at 1080p (scales with resolution)
+    base_resolution_height = 1080
+    hundred_energy_pixel_constant = int(236 * (screen_height / base_resolution_height))
+    
+    total_energy_length = energy_bar_length - 1  # Subtract edge pixel
+    filled_pixels = total_energy_length - empty_energy_pixel_count
+    
+    if hundred_energy_pixel_constant > 0:
+        energy_level = (filled_pixels / hundred_energy_pixel_constant) * 100
+        max_energy = (total_energy_length / hundred_energy_pixel_constant) * 100
+    else:
+        return -1, -1
+    
+    print(f"Energy: {energy_level:.1f}% / {max_energy:.1f}% (bar length: {total_energy_length}px, empty: {empty_energy_pixel_count}px)")
+    
+    return energy_level, max_energy
 
 
 def find_friendship_level(icon_match: tuple[int, int], template: np.ndarray, screenshot: np.ndarray, region: dict, screen_height: int, base_height: int = 1080) -> str:
@@ -322,7 +439,8 @@ class TrainingLocations:
 
         region_type = "training_region"
         self.region_dict = get_search_region(screen_width, screen_height, region_type)
-        
+        time.sleep(0.1)
+        print("Training types: ", end="")
         for name, template_path in TRAINING_AREA.items():
             screenshot = capture_screen(save_debug=True)
             
@@ -354,9 +472,10 @@ class TrainingLocations:
                 global_matches.append((global_x, global_y))
             
             self.locations[name] = (global_matches, template)
-            print(f"Training type {name} found")
+            print(f"{name}", end=" ")
             # print(f"Locations: {global_matches}")
-        
+
+        print("found")
         self._initialized = True
     
     def get_location(self, training_type: str) -> tuple[list[tuple[int, int]], np.ndarray] | None:
@@ -366,7 +485,7 @@ class TrainingLocations:
         return self.locations.get(training_type)
 
 
-def drag_through_training_types(training_locations: TrainingLocations, screen_width: int, screen_height: int) -> None:
+def drag_through_training_types_and_calculate_decision(training_locations: TrainingLocations, screen_width: int, screen_height: int) -> None:
     # Drags through all training types by clicking and holding on the leftmost training type
     # and dragging through all training types in order (left to right)
     
@@ -402,13 +521,14 @@ def drag_through_training_types(training_locations: TrainingLocations, screen_wi
     # Begin click hold
     pyautogui.mouseDown()
     
+    print("--------------------------------")
     # Drag through all remaining locations
     for x, y, training_type in all_locations:
         # TODO: create calculator for decision making
         # TODO: check energy to see if rest is needed
         # TODO: check infirmary to see if it's needed
         pyautogui.moveTo(x, y, duration=0.001)
-        print(f"{training_type}: ", end="")
+        print(f"Training type {training_type}")
 
         screenshot = capture_screen(save_debug=True)
         region_type = "support_region"
@@ -433,35 +553,11 @@ def drag_through_training_types(training_locations: TrainingLocations, screen_wi
             matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height, use_grayscale=False)
             unity_matches[name] = matches
             unity_templates[name] = template
-            print(f"Found {len(matches)} {name} unity icons at: {matches}")
+            print(f"{len(matches)} {name}", end=" ")
+            # print(f"{len(matches)} {name} unity icons at: {matches}")
 
-        # Remove "training" icons that overlap with "expired" icons (they're the same position)
-        if "expired" in unity_matches and "training" in unity_matches:
-            expired_positions = unity_matches["expired"]
-            training_positions = unity_matches["training"]
-            
-            # filter out training icons that're in the same position as expired icons
-            # Using pixel_distance to account for slight variations
-            filtered_training = []
-            for training_pos in training_positions:
-                is_overlapping = False
-                for expired_pos in expired_positions:
-                    dx = abs(training_pos[0] - expired_pos[0])
-                    dy = abs(training_pos[1] - expired_pos[1])
-                    # If within 10 pixels consider it overlapping (same icon)
-                    if dx < 10 and dy < 10:
-                        is_overlapping = True
-                        break
-                
-                if not is_overlapping:
-                    filtered_training.append(training_pos)
-            
-            unity_matches["training"] = filtered_training
-            print(f"After removing overlaps: {len(filtered_training)} training unity icons remain")
-        # for name, matches in unity_matches.items():
-        #     for match in matches:
-        #         print(f"Found {name} icon at: {match}")
         print()
+        print("--------------------------------")
 
     
     # Release mouse button
@@ -486,13 +582,17 @@ def main():
     if len(matches) > 0:
         print("Training button found")
         click_template_match(matches[0], template, region_dict, click_center=True)
-    
-    # debug_search_area(screenshot.copy(), region_dict)
-    
+    else:
+        print("Training button not found")
+
+    # returns energy level and max energy level
+    check_energy_level(screenshot, screen_width, screen_height)
+
+
     # Detect all training locations once - only needs to be called once per run
     training_locations = TrainingLocations()
     training_locations.detect_all(screen_width, screen_height)
-    drag_through_training_types(training_locations, screen_width, screen_height)
+    drag_through_training_types_and_calculate_decision(training_locations, screen_width, screen_height)
 
 if __name__ == "__main__":
     main()
