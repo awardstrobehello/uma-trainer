@@ -283,6 +283,32 @@ UNITY_TRAINING_TYPES = {
 # base = total_supports + (non_max_friends * 0.5) + hint_bonus
 # speed and wit are usually heaviest - you need speed to win, wit to do more training
 # priority_bonus = 1 + PRIORITY_WEIGHT
+# controls how much priority stats affect the training score adder
+PRIORITY_WEIGHT = {
+    "HEAVY": 0.75,   # Strong priority influence
+    "MEDIUM": 0.5,   # Moderate priority influence
+    "SMALL": 0.25,   # Weak priority influence
+    "NONE": 0.0      # No priority influence
+}
+
+# how much each stat/resource contributes to choice scoring
+CHOICE_WEIGHT = {
+    "spd": 1.0,        # Speed stat weight
+    "sta": 1.0,        # Stamina stat weight
+    "pwr": 1.0,        # Power stat weight
+    "guts": 1.0,       # Guts stat weight
+    "wit": 1.0,        # Wit stat weight
+    "hp": 0.5,         # Energy (HP) weight (lower because overflow penalty applies)
+    "mood": 0.8,       # Mood weight (only counts if mood < max)
+    "max_energy": 0.3, # Max energy increase weight
+    "skillpts": 0.4,   # Skill points weight
+    "bond": 0.6,       # Friendship bond weight
+}
+
+# Training decision constants
+# HINT_POINT = 0.6  # I ignore hints in my runs so I don't need this right now
+NON_MAX_FRIEND_INCREASE = 0.25  # increases score for each non-maxed friendship level
+
 
 def get_pixel_color(screenshot: np.ndarray, x: int, y: int) -> np.ndarray:
     # Get BGR color of a pixel at global coordinates
@@ -521,11 +547,19 @@ def drag_through_training_types_and_calculate_decision(training_locations: Train
     # Begin click hold
     pyautogui.mouseDown()
     
+    # Create dict for calculating training score
+    training_score_dict = {
+        "speed": 0,
+        "stamina": 0,
+        "power": 0,
+        "guts": 0,
+        "wit": 1, # because the extra turn is that valuable
+    }
+
     print("--------------------------------")
     # Drag through all remaining locations
     for x, y, training_type in all_locations:
         # TODO: create calculator for decision making
-        # TODO: check energy to see if rest is needed
         # TODO: check infirmary to see if it's needed
         pyautogui.moveTo(x, y, duration=0.001)
         print(f"Training type {training_type}")
@@ -542,18 +576,40 @@ def drag_through_training_types_and_calculate_decision(training_locations: Train
             for match in matches:
                 friendship_level = find_friendship_level(match, template, screenshot, region_dict, screen_height)
                 print(f"{name} friendship {friendship_level} | ", end="")
+
+                # Non-maxed friendship bonus
+                if friendship_level not in ("max", "orange"):
+                    training_score_dict[training_type] += NON_MAX_FRIEND_INCREASE
+                    print(f"non-max + {NON_MAX_FRIEND_INCREASE}", end=" ")
+
+                # Rainbow bonus
+                if name == training_type and (friendship_level in ("max", "orange")):
+                    training_score_dict[training_type] += 2
+                    print(f"rainbow + 2", end=" ")
+
                 # print(f"Location: {match}")
         print()
 
         # Unity training types detection
         unity_matches = {}
         unity_templates = {}
+
+        # TODO: take location of unity icons and check it's expired
+        #       by color checking using relative coordinates 
+        #       (will basically always be right below training)
         
         for name, template_path in UNITY_TRAINING_TYPES.items():
             matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height, use_grayscale=False)
             unity_matches[name] = matches
-            unity_templates[name] = template
-            print(f"{len(matches)} {name}", end=" ")
+            # print(f"{len(matches)} {name}", end=" ")
+            for match in matches:
+                if name in "burst":
+                    training_score_dict[training_type] += 2
+                    print(f"burst (2)", end=" ")
+                elif name in "training":
+                    training_score_dict[training_type] += 1
+                    print(f"training (1)", end=" ")
+            
             # print(f"{len(matches)} {name} unity icons at: {matches}")
 
         print()
@@ -563,6 +619,13 @@ def drag_through_training_types_and_calculate_decision(training_locations: Train
     # Release mouse button
     pyautogui.mouseUp()
     
+
+
+    # Show training score
+    for name, score in training_score_dict.items():
+            print(f"{name}: {score}")
+
+
     print(f"Completed drag")
         
 def main():
