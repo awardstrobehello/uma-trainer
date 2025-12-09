@@ -142,6 +142,22 @@ def debug_search_area(screenshot: np.ndarray, region: dict) -> None:
     cv2.imwrite('test_images/region_visualization.png', screenshot)
 
 
+def draw_rectangle_at_point(screenshot: np.ndarray, x: int, y: int, size: int = 10, color: tuple[int, int, int] = (0, 255, 0), thickness: int = 2) -> None:
+    # x, y: Global coordinates
+    # thickness = line thickness
+    
+    cv2.rectangle(
+        screenshot,
+        (x - size, y - size),
+        (x + size, y + size),
+        color,
+        thickness
+    )
+    # Also draw crosshair for better visibility
+    cv2.line(screenshot, (x - size * 2, y), (x + size * 2, y), color, 1)
+    cv2.line(screenshot, (x, y - size * 2), (x, y + size * 2), color, 1)
+
+
 def scale_template(template: np.ndarray, screen_width: int, screen_height: int, base_width: int = 1920, base_height: int = 1080) -> np.ndarray:
     # scales template image to match current screen resolution
     
@@ -313,6 +329,49 @@ NON_MAX_FRIEND_INCREASE = 0.25  # increases score for each non-maxed friendship 
 def get_pixel_color(screenshot: np.ndarray, x: int, y: int) -> np.ndarray:
     # Get BGR color of a pixel at global coordinates
     return screenshot[y, x]  # OpenCV arrays are [height, width], so [y, x]
+
+
+def get_color_below_match(match: tuple[int, int], template: np.ndarray, screenshot: np.ndarray, region: dict, screen_height: int, pixels_down: int = 60, pixels_right: int = 0, base_height: int = 1080, draw_rectangle: bool = False) -> tuple[np.ndarray, tuple[int, int]]:
+    # Get BGR color of a pixel at a specified distance below
+    # or optionally right of a template match
+    
+    match_x_relative, match_y_relative = match
+    template_h, template_w = template.shape[:2]
+    
+    # Calculate center of template match relative to cropped region
+    match_center_x_relative = match_x_relative + template_w // 2
+    match_center_y_relative = match_y_relative + template_h // 2
+    
+    # Scale the pixel distances based on resolution
+    scaled_pixels_down = int(pixels_down * (screen_height / base_height))
+    scaled_pixels_right = int(pixels_right * (screen_height / base_height))
+    
+    # Calculate position with offset
+    check_x_relative = match_center_x_relative + scaled_pixels_right
+    check_y_relative = match_center_y_relative + scaled_pixels_down
+    
+    # Convert to global coordinates
+    global_x = region['x'] + check_x_relative
+    global_y = region['y'] + check_y_relative
+    
+    # Draw rectangle at check location if requested
+    if draw_rectangle:
+        # Draw a small rectangle (5x5 pixels) around the check point
+        rect_size = 5
+        cv2.rectangle(
+            screenshot,
+            (global_x - rect_size, global_y - rect_size),
+            (global_x + rect_size, global_y + rect_size),
+            (0, 255, 0),  # Green color in BGR
+            2  # Thickness
+        )
+        # Also draw a crosshair for better visibility
+        cv2.line(screenshot, (global_x - 10, global_y), (global_x + 10, global_y), (0, 255, 0), 1)
+        cv2.line(screenshot, (global_x, global_y - 10), (global_x, global_y + 10), (0, 255, 0), 1)
+    
+    # Get color at that position
+    color_bgr = get_pixel_color(screenshot, global_x, global_y)
+    return color_bgr, (global_x, global_y)
 
 
 def count_pixels_of_color(screenshot: np.ndarray, region: dict, target_color_bgr: list[int], tolerance: int = 2) -> int:
@@ -511,7 +570,7 @@ class TrainingLocations:
         return self.locations.get(training_type)
 
 
-def drag_through_training_types_and_calculate_decision(training_locations: TrainingLocations, screen_width: int, screen_height: int) -> None:
+def drag_through_training_types_and_get_score(training_locations: TrainingLocations, screen_width: int, screen_height: int) -> dict:
     # Drags through all training types by clicking and holding on the leftmost training type
     # and dragging through all training types in order (left to right)
     
@@ -530,6 +589,9 @@ def drag_through_training_types_and_calculate_decision(training_locations: Train
                 x, y = global_matches[0]
                 all_locations.append((x, y, training_type))
     
+    print("--------------------------------")
+
+
     if len(all_locations) == 0:
         print("No training type locations found")
         return
@@ -559,7 +621,6 @@ def drag_through_training_types_and_calculate_decision(training_locations: Train
     print("--------------------------------")
     # Drag through all remaining locations
     for x, y, training_type in all_locations:
-        # TODO: create calculator for decision making
         # TODO: check infirmary to see if it's needed
         pyautogui.moveTo(x, y, duration=0.001)
         print(f"Training type {training_type}")
@@ -575,58 +636,62 @@ def drag_through_training_types_and_calculate_decision(training_locations: Train
             matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height)
             for match in matches:
                 friendship_level = find_friendship_level(match, template, screenshot, region_dict, screen_height)
-                print(f"{name} friendship {friendship_level} | ", end="")
+                print(f"| {name}", end=" ")
 
                 # Non-maxed friendship bonus
                 if friendship_level not in ("max", "orange"):
                     training_score_dict[training_type] += NON_MAX_FRIEND_INCREASE
-                    print(f"non-max + {NON_MAX_FRIEND_INCREASE}", end=" ")
+                    print(f"; {friendship_level}; {NON_MAX_FRIEND_INCREASE}", end=" ")
 
                 # Rainbow bonus
                 if name == training_type and (friendship_level in ("max", "orange")):
-                    training_score_dict[training_type] += 2
-                    print(f"rainbow + 2", end=" ")
+                    training_score_dict[training_type] += 2.2
+                    print(f"; rainbow + 2.2", end=" ")
+                print()
 
                 # print(f"Location: {match}")
-        print()
 
         # Unity training types detection
         unity_matches = {}
         unity_templates = {}
-
-        # TODO: take location of unity icons and check it's expired
-        #       by color checking using relative coordinates 
-        #       (will basically always be right below training)
-        
+       
         for name, template_path in UNITY_TRAINING_TYPES.items():
             matches, template = find_template_in_region(template_path, screenshot, region_dict, screen_width, screen_height, use_grayscale=False)
             unity_matches[name] = matches
             # print(f"{len(matches)} {name}", end=" ")
-            for match in matches:
+            for match in matches: 
                 if name in "burst":
                     training_score_dict[training_type] += 2
-                    print(f"burst (2)", end=" ")
+                    print(f"burst (2)", end="\n")
                 elif name in "training":
-                    training_score_dict[training_type] += 1
-                    print(f"training (1)", end=" ")
+                    color_below, check_coords = get_color_below_match(
+                        match, template, screenshot, region_dict, screen_height, 
+                        pixels_down=55, 
+                        pixels_right=0,
+                        draw_rectangle=False
+                    )
+                    # print(f"{name}, position at {check_coords}: BGR{color_below.tolist()}", end=" | ")
+                    if color_below[2] < 100:
+                        training_score_dict[training_type] += 0
+                        print(f"| | expired (0)", end="\n")
+                    else:
+                        training_score_dict[training_type] += 1
+                        print(f"| | training (1)", end="\n")
             
             # print(f"{len(matches)} {name} unity icons at: {matches}")
 
-        print()
+        # Save screenshot with color check rectangles for debugging
+        cv2.imwrite('test_images/color_check_locations.png', screenshot)
+        
         print("--------------------------------")
 
     
     # Release mouse button
     pyautogui.mouseUp()
-    
+    print("Completed drag")
+    print("--------------------------------")
 
-
-    # Show training score
-    for name, score in training_score_dict.items():
-            print(f"{name}: {score}")
-
-
-    print(f"Completed drag")
+    return training_score_dict
         
 def main():
     select_monitor(monitor_index=None)    
@@ -648,14 +713,20 @@ def main():
     else:
         print("Training button not found")
 
-    # returns energy level and max energy level
-    check_energy_level(screenshot, screen_width, screen_height)
 
 
     # Detect all training locations once - only needs to be called once per run
     training_locations = TrainingLocations()
     training_locations.detect_all(screen_width, screen_height)
-    drag_through_training_types_and_calculate_decision(training_locations, screen_width, screen_height)
+    training_score_dict = drag_through_training_types_and_get_score(training_locations, screen_width, screen_height)
+
+    # returns energy level and max energy level
+    energy_level, max_energy = check_energy_level(screenshot, screen_width, screen_height)
+    # Show training score
+    for name, score in training_score_dict.items():
+            print(f"{name}: {score}")
+    #TODO: Check energy level before decision
+
 
 if __name__ == "__main__":
     main()
