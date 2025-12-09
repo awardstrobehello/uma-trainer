@@ -9,10 +9,10 @@ umazing! a training optimizer for umamusume: pretty derby
 ### Completed
 - template matching for UI detection
 - card detection in training regions
+- detect support level
+- detect unity training + spirit burst
 
 ### To-do
-- detect support level
-- detect training burst
 - decision making calculations
 - choice maker for events
 - choosing medium in the beginning or end of the run
