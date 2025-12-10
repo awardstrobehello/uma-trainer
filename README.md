@@ -1,7 +1,7 @@
 # uma-trainer
-umazing! a training optimizer for umamusume: pretty derby
-- a greedy auto-runner using heuristics, specifically NorthernLion's method for training.
-- spark farming using template matching and OCR
+umazing! a spark grinder for umamusume: pretty derby
+- greedy auto-runner
+- made for spark farming using template matching and OCR
 - plays "good enough" to run for you. turn it on and leave
 
 ## Roadmap
@@ -17,21 +17,9 @@ umazing! a training optimizer for umamusume: pretty derby
 ### To-do
 - event choice (requires databse. C# / EF Core...?)
 - race planning
-- database population
+- database population for cards
 - refactor so not everything is stuffed in main
 - scale to resolutions outside of 16:9 (evenutally)
-
-#### Ace Trainer (maybe)
-- ace trainer mode with stricter stat targets
-- detecting Riko Kashimoto
-- web ui for configuration (target stats, scenarios, support deck)
-
-#### Complete Simulator (probably not)
-- create databases
-    - support cards (skills, stats, lb rating. every single card!) - what the whole app will depend on
-    - umas (mainly for stat growth, events, required races)
-    - race database?
-    - scenario database (potentially)
 
 ## Contributing
 open to contributions, but please follow best practices
