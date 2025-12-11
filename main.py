@@ -5,6 +5,9 @@ from PIL import Image
 import pyautogui
 import time
 import random
+import keyboard
+import threading
+import sys
 # Sometimes template matching returns duplicate matches, false positives that are a few pixels off from the actual match    
 # This function removes them
 def remove_duplicates(matches, pixel_distance=5):
@@ -30,6 +33,10 @@ def remove_duplicates(matches, pixel_distance=5):
 # Global variable to store selected monitor (set once at startup)
 # at least until I add a GUI
 SELECTED_MONITOR: dict | None = None
+
+# Global flags for hotkey control
+SHUTDOWN_FLAG = threading.Event()  # Set when F1 is pressed (force shutdown)
+RUNNING_FLAG = threading.Event()   # Controls start/stop (F2 toggles)
 
 
 def list_monitors() -> list[dict]:
@@ -176,9 +183,9 @@ def scale_template(template: np.ndarray, screen_width: int, screen_height: int, 
 
 def click_at_position(x: int, y: int) -> None:
     # global coordinates
-    random_delay = random.uniform(0.1, 0.325)
+    random_delay = random.uniform(0.001, 0.525)
     time.sleep(random_delay)
-    pyautogui.moveTo(x, y, duration=0.225)
+    pyautogui.moveTo(x, y, duration=0.1)
     pyautogui.click()
 
 
@@ -262,6 +269,12 @@ SEARCH_REGIONS = {
         'y': int(h * 0.11),
         'width': int(w * 0.2),
         'height': int(h * 0.03)
+    },
+    "race_region": lambda w, h: {
+        'x': int(w * 0.135),
+        'y': int(h * 0.48),
+        'width': int(w * 0.3),
+        'height': int(h * 0.5)
     },
 }
 
@@ -477,8 +490,8 @@ def check_energy_level(screenshot: np.ndarray, screen_width: int, screen_height:
     else:
         return -1, -1
     
-    print(f"Energy: {energy_level:.1f}% / {max_energy:.1f}% (bar length: {total_energy_length}px, empty: {empty_energy_pixel_count}px)")
-    
+    print(f"Energy: {energy_level:.1f}% | {max_energy:.1f}%")
+    # print(f"(bar length: {total_energy_length}px, empty: {empty_energy_pixel_count}px)")
     return energy_level, max_energy
 
 
@@ -642,7 +655,7 @@ def drag_through_training_types_and_get_score(training_locations: TrainingLocati
 
                 # Non-maxed friendship bonus
                 if friendship_level not in ("max", "orange"):
-                    training_score_dict[training_type] += NON_MAX_FRIEND_INCREASE
+                    training_score_dict[training_type] += 1 + NON_MAX_FRIEND_INCREASE
                     print(f"; {friendship_level}; {NON_MAX_FRIEND_INCREASE}", end=" ")
 
                 # Rainbow bonus
@@ -697,59 +710,178 @@ def drag_through_training_types_and_get_score(training_locations: TrainingLocati
     print("--------------------------------")
 
     return training_score_dict
+
+
+def setup_hotkeys():
+    # F1: Force shutdown (immediate exit)
+    # F2: Toggle start/stop (pause/resume bot)
+    
+    def on_f1_press():
+        global SHUTDOWN_FLAG
+        print("\n[F1] Force shutdown requested")
+        SHUTDOWN_FLAG.set()
+        sys.exit(0)
+    
+    def on_f2_press():
+        global RUNNING_FLAG
+        if RUNNING_FLAG.is_set():
+            RUNNING_FLAG.clear()
+            print("\n[F2] Bot PAUSED. Press F2 again to resume")
+        else:
+            RUNNING_FLAG.set()
+            print("\n[F2] Bot RESUMED")
+    
+    try:
+        # Register hotkeys
+        keyboard.on_press_key('f1', lambda _: on_f1_press())
+        keyboard.on_press_key('f2', lambda _: on_f2_press())
+        
+        print("Hotkeys registered:")
+        print("  F1 - Force shutdown")
+        print("  F2 - Toggle start/stop")
+        print("Press F1 or F2 at any time to control the bot.")
+        print("Note: On Windows, run as Administrator for global hotkeys when window is not focused.\n")
+    except Exception as e:
+        print(f"Warning: Could not register hotkeys: {e}")
+        print("Hotkeys may not work. Try running as Administrator on Windows.\n")
+
+
+def check_button(template_path: str, screenshot: np.ndarray, region_dict: dict, 
+                           screen_width: int, screen_height: int, 
+                           button_name: str, click: bool = False) -> bool:
+    # Returns True if button found (optional click)
+    matches, template = find_template_in_region(template_path, screenshot, region_dict, 
+                                               screen_width, screen_height)
+    if len(matches) > 0:
+        print(f"{button_name} found")
+        # color_bgr = get_pixel_color(screenshot, matches[0][0], matches[0][1])
+        # print(f"Pixel color: {color_bgr.tolist()}")
+        if click:
+            click_template_match(matches[0], template, region_dict, click_center=True)
+        return True
+    return False
         
 def main():
+    global SHUTDOWN_FLAG, RUNNING_FLAG
+    
+    # Set up global hotkeys
+    setup_hotkeys()
+    
     select_monitor(monitor_index=None)    
     screenshot = capture_screen(save_debug=True)
 
     screen_width, screen_height = screenshot.shape[1], screenshot.shape[0]
-
-    # State check. in "choice" area? rest, infirmary, etc
-    region_type = "choice_region"
-    region_dict = get_search_region(screen_width, screen_height, region_type)
-    cropped_region = crop_region(screenshot, region_dict)
-    # debug_search_area(screenshot.copy(), region_dict)
-
-    # Template matching for training button
-    matches, template = find_template_in_region('assets/buttons/training_btn.png', screenshot, region_dict, screen_width, screen_height)
-    if len(matches) > 0:
-        print("Training button found")
-        click_template_match(matches[0], template, region_dict, click_center=True)
-    else:
-        print("Training button not found")
-
-
-
-    # Detect all training locations once - only needs to be called once per run
-    training_locations = TrainingLocations()
-    training_locations.detect_all(screen_width, screen_height)
-    training_score_dict = drag_through_training_types_and_get_score(training_locations, screen_width, screen_height)
-
-    # returns energy level and max energy level
-    energy_level, max_energy = check_energy_level(screenshot, screen_width, screen_height)
-
+    print(f"F1: force shutdown")
+    print(f"F2: toggle start/stop")
     print("--------------------------------")
+    # Main loop - check flags for shutdown and running state
+    while not SHUTDOWN_FLAG.is_set():
+        # Check if bot is paused
+        if not RUNNING_FLAG.is_set():
+            time.sleep(0.5)  # Wait while paused
+            continue
+        
+        # Main bot logic here
 
-    # Show training score
-    for name, score in training_score_dict.items():
-            print(f"{name}: {score}")
+        # Three states:
+        random_delay = random.uniform(0.01, 5)
+        time.sleep(random_delay)
+        # click_at_position(0.418 * screen_width, 0.303 * screen_height)
+        screenshot = capture_screen(save_debug=True)
 
-    #TODO: Flesh out decision logic for rest vs train
-    #TODO: Event checker logic
+        # STATE 1: TRAINING AREA
+        region_type = "choice_region"
+        region_dict = get_search_region(screen_width, screen_height, region_type)
+        cropped_region = crop_region(screenshot, region_dict)
+        debug_search_area(screenshot.copy(), region_dict)
+
+        # Always check for infirmary first
+        # if check_button('assets/buttons/infirmary_btn.png', screenshot, region_dict, screen_width, screen_height, "Choice area: infirmary"):
+            # color is 253, 242, 244; greyed out
+            # TODO: If not greyed out
+            # else:
+                # continue
+
+        # Template matching for training button
+        if check_button('assets/buttons/training_btn.png', screenshot, region_dict, screen_width, screen_height, "Choice area: training", click=True):
+
+            # Detect all training locations once - only needs to be called once per run
+            training_locations = TrainingLocations()
+            training_locations.detect_all(screen_width, screen_height)
+            training_score_dict = drag_through_training_types_and_get_score(training_locations, screen_width, screen_height)
+
+            # returns energy level and max energy level
+            energy_level, max_energy = check_energy_level(screenshot, screen_width, screen_height)
+
+            print("--------------------------------")
+
+            # Show training score
+            for name, score in training_score_dict.items():
+                    print(f"{name}: {score}")
+
+            #TODO: Flesh out decision logic for rest vs train
+            #TODO: Event checker logic
+            
+            # get max value of training score dict
+            best_location, max_score = max(training_score_dict.items(), key=lambda x: x[1])
+
+            # Wit is +1 for a reason
+            if energy_level < 50 and max_score < 3:
+                print("rest")
+                pyautogui.press("esc")
+                continue
+            else:
+                print(f"train {best_location}")
+                # pyautogui.press("enter")
+                continue
+        
+        # STATE 2: RACE AREA
+        region_type = "race_region"
+        region_dict = get_search_region(screen_width, screen_height, region_type)
+        cropped_region = crop_region(screenshot, region_dict)
+        # debug_search_area(screenshot.copy(), region_dict)
+
+        # Check for race, thennnnn do specific logic: race -> race -> view result -> next
+        if check_button('assets/buttons/race_btn.png', screenshot, region_dict, screen_width, screen_height, "Race event"):
+            continue
+
+        if check_button('assets/buttons/next_btn.png', screenshot, region_dict, screen_width, screen_height, "Next button"):
+            continue
+        
+        if check_button('assets/buttons/next2_btn.png', screenshot, region_dict, screen_width, screen_height, "Next2 button"):
+            continue
+        
+        if check_button('assets/buttons/ok_btn.png', screenshot, region_dict, screen_width, screen_height, "Ok button"):
+            continue
+        
+        if check_button('assets/buttons/view_results.png', screenshot, region_dict, screen_width, screen_height, "View results button"):
+            continue
+
+            # STATE 3: EVENT AREA (could happen at any time)
+        if check_button('assets/icons/event_choice_1.png', screenshot, region_dict, screen_width, screen_height, "Event: choice 1"):
+            continue
+
+            # STATE 4: DISCONNECT (could happen at any time)
+            
+            # Add a small delay to prevent excessive CPU usage
+            # Adjust this based on your needs (0.5 seconds = 2 screenshots per second)
+            time.sleep(0.5)
+            
+            # Check for shutdown before next iteration
+        if SHUTDOWN_FLAG.is_set():
+            print("Shutdown flag detected. Exiting main loop...")
+            break
     
-    # get max value of training score dict
-    best_location, max_score = max(training_score_dict.items(), key=lambda x: x[1])
-
-    # Wit is +1 for a reason
-    if energy_level < 50 and max_score < 3:
-        print("rest")
-        pyautogui.press("esc")
-        return
-    else:
-        print(f"train {best_location}")
-        # pyautogui.press("enter")
-        return
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nInterrupted by user. Exiting...")
+    except Exception as e:
+        print(f"\nError: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        print("Cleaning up...")
