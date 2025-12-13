@@ -13,19 +13,17 @@ umazing! a spark grinder for umamusume: pretty derby
 - detect unity training + spirit burst
 - mouse/keyboard control with pyautogui
 - decision making calculations (primitive)
+- event choice (local)
 
 ### To-do
-- event choice (requires databse. C# / EF Core...?)
-- race planning
-- database population for cards
+- database population for umas, support cards, other events
 - refactor so not everything is stuffed in main
 - scale to resolutions outside of 16:9 (evenutally)
+- frontend (when the hardcoded backend works)
 
 ## Contributing
 open to contributions, but please follow best practices
 
-- open an issue before major changes
-- follow existing code style
 - please test your changes. or at the very least explain what you tested
 - MAKE SURE THAT IT WORKS PROPERLY!! i dont want to spend time debugging it
 
