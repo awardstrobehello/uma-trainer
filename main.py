@@ -8,6 +8,9 @@ import random
 import keyboard
 import threading
 import sys
+import easyocr
+import re
+import difflib
 # Sometimes template matching returns duplicate matches, false positives that are a few pixels off from the actual match    
 # This function removes them
 def remove_duplicates(matches, pixel_distance=5):
@@ -37,6 +40,20 @@ SELECTED_MONITOR: dict | None = None
 # Global flags for hotkey control
 SHUTDOWN_FLAG = threading.Event()  # Set when F1 is pressed (force shutdown)
 RUNNING_FLAG = threading.Event()   # Controls start/stop (F2 toggles)
+
+# Initialize EasyOCR reader (like reference codebase)
+# GPU=True for better performance if GPU available, falls back to CPU if not
+try:
+    OCR_READER = easyocr.Reader(["en"], gpu=True)
+    print("EasyOCR initialized with GPU support")
+except Exception as e:
+    print(f"Warning: Could not initialize EasyOCR with GPU: {e}")
+    try:
+        OCR_READER = easyocr.Reader(["en"], gpu=False)
+        print("EasyOCR initialized with CPU (slower)")
+    except Exception as e2:
+        print(f"Error: Could not initialize EasyOCR: {e2}")
+        OCR_READER = None
 
 
 def list_monitors() -> list[dict]:
@@ -210,6 +227,322 @@ def convert_to_grayscale(image: np.ndarray) -> np.ndarray:
     return image  # Already grayscale
 
 
+def normalize_text(text: str) -> str:
+    # Normalize OCR noise: collapse spaces, lowercase
+    # Based on reference codebase's _norm function
+    return re.sub(r"\s+", " ", text or "").strip().casefold()
+
+
+def preprocess_for_ocr_method1(image: np.ndarray, scale_factor: float = 2.0) -> np.ndarray:
+    # First preprocessing method: grayscale + adaptive threshold
+    # Similar to reference's enhance_image_for_ocr
+    processed = convert_to_grayscale(image)
+    
+    if scale_factor != 1.0:
+        height, width = processed.shape[:2]
+        new_width = int(width * scale_factor)
+        new_height = int(height * scale_factor)
+        processed = cv2.resize(processed, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+    
+    # Adaptive threshold
+    processed = cv2.adaptiveThreshold(
+        processed, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv2.THRESH_BINARY, 11, 2
+    )
+    
+    return processed
+
+
+def preprocess_for_ocr_method2(image: np.ndarray, scale_factor: float = 2.0) -> np.ndarray:
+    # Second preprocessing method: grayscale + Otsu threshold
+    # Similar to reference's enhance_image_for_ocr_2
+    processed = convert_to_grayscale(image)
+    
+    if scale_factor != 1.0:
+        height, width = processed.shape[:2]
+        new_width = int(width * scale_factor)
+        new_height = int(height * scale_factor)
+        processed = cv2.resize(processed, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+    
+    # Otsu's method
+    _, processed = cv2.threshold(processed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    return processed
+
+
+def preprocess_for_ocr(image: np.ndarray, use_grayscale: bool = True, scale_factor: float = 2.0, 
+                       apply_threshold: bool = True, threshold_method: str = "adaptive") -> np.ndarray:
+    # Preprocess image for better OCR accuracy
+    # use_grayscale: Convert to grayscale (usually improves accuracy)
+    # scale_factor: Scale up image (2.0 = double size, helps with small text)
+    # apply_threshold: Apply binary thresholding (black/white)
+    # threshold_method: "adaptive" (better for varying lighting) or "otsu" (better for consistent lighting)
+    
+    processed = image.copy()
+    
+    # Convert to grayscale if requested
+    if use_grayscale:
+        processed = convert_to_grayscale(processed)
+    
+    # Scale up for better OCR (EasyOCR works better on larger text)
+    if scale_factor != 1.0:
+        height, width = processed.shape[:2]
+        new_width = int(width * scale_factor)
+        new_height = int(height * scale_factor)
+        processed = cv2.resize(processed, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+    
+    # Apply thresholding for binary image (black text on white background)
+    if apply_threshold:
+        if threshold_method == "adaptive":
+            # Adaptive threshold - good for varying lighting conditions
+            processed = cv2.adaptiveThreshold(
+                processed, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                cv2.THRESH_BINARY, 11, 2
+            )
+        elif threshold_method == "otsu":
+            # Otsu's method - automatically finds optimal threshold
+            _, processed = cv2.threshold(processed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        else:
+            # Simple binary threshold
+            _, processed = cv2.threshold(processed, 127, 255, cv2.THRESH_BINARY)
+    
+    return processed
+
+
+def _get_text_with_confidence(processed_image: np.ndarray, allowlist: str | None = None, 
+                               confidence_threshold: float = 0.0) -> tuple[str, float]:
+    # Helper function to extract text from a preprocessed image using EasyOCR
+    # Returns: (text, average_confidence)
+    # confidence_threshold: 0.0-100.0 (converted from EasyOCR's 0.0-1.0 format)
+    # allowlist: Filter characters (EasyOCR doesn't support allowlist directly, so we filter results)
+    
+    global OCR_READER
+    
+    if OCR_READER is None:
+        return "", 0.0
+    
+    try:
+        # EasyOCR returns: [(bbox, text, confidence), ...]
+        # confidence is 0.0-1.0, we convert to 0-100 for consistency
+        results = OCR_READER.readtext(processed_image)
+        
+        texts = []
+        confidences = []
+        
+        # Convert confidence threshold from 0-100 to 0-1 for EasyOCR
+        easyocr_threshold = confidence_threshold / 100.0 if confidence_threshold > 0 else 0.0
+        
+        for (bbox, text, conf) in results:
+            text = text.strip()
+            # EasyOCR confidence is 0.0-1.0, convert to 0-100
+            conf_percent = conf * 100.0
+            
+            if text and conf_percent >= confidence_threshold:
+                # Filter by allowlist if provided
+                if allowlist:
+                    # Filter out characters not in allowlist, keep spaces for readability
+                    filtered_text = "".join(c if c in allowlist or c.isspace() else "" for c in text).strip()
+                    if filtered_text:  # Only add if there's text after filtering
+                        texts.append(filtered_text)
+                        confidences.append(conf_percent)
+                else:
+                    texts.append(text)
+                    confidences.append(conf_percent)
+        
+        extracted_text = " ".join(texts)
+        avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+        
+        return extracted_text, avg_confidence
+    
+    except Exception as e:
+        print(f"EasyOCR error: {e}")
+        return "", 0.0
+
+
+
+def extract_text_improved(screenshot: np.ndarray, region: dict, screen_width: int, screen_height: int,
+                          allowlist: str | None = None, confidence_threshold: float = 0.0) -> tuple[str, float]:
+    # Improved OCR extraction using multiple preprocessing strategies (based on reference codebase)
+    # Tries multiple preprocessing methods and picks the result with highest total confidence
+    # Heavier but more accurate than single-method extraction
+    
+    cropped = crop_region(screenshot, region)
+    scale_factor = 2.0
+    all_results: list[tuple[str, float]] = []
+    
+    # Try raw image first (grayscale only, no threshold)
+    processed_raw = convert_to_grayscale(cropped)
+    if scale_factor != 1.0:
+        height, width = processed_raw.shape[:2]
+        new_width = int(width * scale_factor)
+        new_height = int(height * scale_factor)
+        processed_raw = cv2.resize(processed_raw, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+    
+    result_raw = _get_text_with_confidence(processed_raw, allowlist, confidence_threshold)
+    if result_raw[0]:  # If we got text
+        all_results.append(result_raw)
+    
+    # Try method 1: adaptive threshold
+    processed1 = preprocess_for_ocr_method1(cropped, scale_factor)
+    result1 = _get_text_with_confidence(processed1, allowlist, confidence_threshold)
+    if result1[0]:
+        all_results.append(result1)
+    
+    # Try method 2: Otsu threshold
+    processed2 = preprocess_for_ocr_method2(cropped, scale_factor)
+    result2 = _get_text_with_confidence(processed2, allowlist, confidence_threshold)
+    if result2[0]:
+        all_results.append(result2)
+    
+    # Pick the result with highest confidence
+    if all_results:
+        best_result = max(all_results, key=lambda x: x[1])  # Highest confidence
+        final_text = best_result[0]
+        # Normalize spaces and strip extra whitespace (like reference codebase)
+        final_text = " ".join(final_text.split())
+        return final_text, best_result[1]
+    
+    return "", 0.0
+
+
+def _parse_ocr_digits(raw: str) -> int | None:
+    # Parse digits from OCR text with error correction (based on reference codebase)
+    # Handles common OCR errors:
+    # - "3%" → OCR reads as "39" (trailing 9)
+    # - "30%" → OCR reads as "309" (extra digit)
+    # - "399" → Should be "39" (first two digits)
+    
+    digits = re.sub(r"[^\d]", "", raw or "")
+    if not digits:
+        return None
+    
+    # Case A: 3-digit OCR cases like 399, 309
+    if len(digits) == 3:
+        first_two = digits[:2]
+        if first_two.isdigit():
+            v = int(first_two)
+            if 0 <= v <= 100:
+                return v
+    
+    # Case B: 2-digit ambiguous cases like 39, 29, 19
+    if len(digits) == 2:
+        # If OCR adds a trailing '9', real value is usually single digit (3% → 39)
+        if digits[1] == "9":
+            return int(digits[0])
+        # no trailing 9 → treat normally (e.g., 30, 23)
+        return int(digits)
+    
+    # Case C: 1-digit clean value
+    if len(digits) == 1:
+        return int(digits)
+    
+    # Case D: fallback for clean 0–100
+    if digits.isdigit():
+        v = int(digits)
+        if 0 <= v <= 100:
+            return v
+    
+    return None
+
+
+def extract_number_from_region(screenshot: np.ndarray, region: dict, screen_width: int, screen_height: int,
+                               use_grayscale: bool = True, scale_factor: float = 2.0,
+                               apply_threshold: bool = True) -> int | None:
+    # Extract a number from a region (returns first valid number found, or None)
+    
+    text, confidence = extract_text_improved(
+        screenshot, region, screen_width, screen_height,
+        allowlist="0123456789",
+        confidence_threshold=30.0
+    )
+
+    if not text:
+        return None
+    
+    # Use error-correcting parser
+    return _parse_ocr_digits(text)
+
+
+def extract_percent_from_region(screenshot: np.ndarray, region: dict, screen_width: int, screen_height: int,
+                                use_grayscale: bool = True, scale_factor: float = 2.0,
+                                apply_threshold: bool = True) -> int | None:
+    # Extract percentage value from a region (e.g., "50%" -> 50)
+    # Based on reference codebase's extract_percent with error correction
+    
+    text, confidence = extract_text_improved(
+        screenshot, region, screen_width, screen_height,
+        allowlist="0123456789%",
+        confidence_threshold=30.0
+    )
+    
+    if not text:
+        return None
+    
+    # Replace common OCR mistakes (like reference codebase)
+    text = text.replace("O", "0").replace("o", "0").replace("l", "1")
+    
+    # Capture up to 3 digits immediately before % allowing spaces between digits
+    matches = re.findall(r"(\d{1,3})\s*%?", text)
+    if not matches:
+        return None
+    
+    # Normalize spaces, keep 0–100, prefer 2–3 digit candidates
+    candidates = []
+    for m in matches:
+        v = int(re.sub(r'\s+', '', m))
+        if 0 <= v <= 100:
+            candidates.append(v)
+    
+    if not candidates:
+        return None
+    
+    # Prefer longer numbers to avoid 3 from 33 (like reference codebase)
+    candidates.sort(key=lambda x: (len(str(x)), x), reverse=True)
+    value = candidates[0]
+    
+    # Minimum value of 5 (like reference codebase)
+    return value if value >= 5 else None
+
+
+def extract_text_with_fuzzy_match(screenshot: np.ndarray, region: dict, screen_width: int, screen_height: int,
+                                  expected_options: list[str], confidence_threshold: float = 60.0,
+                                  fuzzy_cutoff: float = 0.92) -> str | None:
+    # Extract text and match against expected options using fuzzy matching
+    # Based on reference codebase's check_unity approach
+    # Useful for matching known text like "Training", "Race Day", etc.
+    # Returns the best matching option or None
+    # fuzzy_cutoff: Similarity threshold for fuzzy matching (0.92 = 92% like reference)
+    text, confidence = extract_text_improved(
+        screenshot, region, screen_width, screen_height,
+        confidence_threshold=confidence_threshold
+    )
+
+    if not text or confidence < confidence_threshold:
+        return None
+    
+    # Normalize text using reference codebase's normalization function
+    normalized_text = normalize_text(text)
+    
+    # Build normalized lookup of allowed options (like reference codebase)
+    canon_by_norm = {normalize_text(opt): opt for opt in expected_options}
+    
+    # Exact match first
+    if normalized_text in canon_by_norm:
+        print(f"Exact match found: '{normalized_text}' (confidence: {confidence:.1f}%)")
+        return canon_by_norm[normalized_text]
+    
+    # Fuzzy match with high threshold (like reference codebase: 0.92 = 92% similarity)
+    match = difflib.get_close_matches(normalized_text, canon_by_norm.keys(), n=1, cutoff=fuzzy_cutoff)
+    
+    if match:
+        print(f"Match found: '{match[0]}' (confidence: {confidence:.1f}%)")
+        return canon_by_norm[match[0]]
+    
+    # Debug output (optional)
+    print(f"No match found: '{normalized_text}' (confidence: {confidence:.1f}%)")
+    return None
+
+
 def find_template_in_region(template_path: str, screenshot: np.ndarray, region: dict, screen_width: int, screen_height: int, confidence_threshold: float = 0.8, use_grayscale: bool = False) -> tuple[list[tuple[int, int]], np.ndarray]:
 
     cropped_region = crop_region(screenshot, region)
@@ -275,6 +608,18 @@ SEARCH_REGIONS = {
         'y': int(h * 0.48),
         'width': int(w * 0.3),
         'height': int(h * 0.5)
+    },
+    "event_title_region": lambda w, h: {
+        'x': int(w * 0.127),
+        'y': int(h * 0.15),
+        'width': int(w * 0.13),
+        'height': int(h * 0.03)
+    },
+    "event_text_region": lambda w, h: {
+        'x': int(w * 0.127),
+        'y': int(h * 0.18),
+        'width': int(w * 0.2),
+        'height': int(h * 0.05)
     },
 }
 
@@ -490,7 +835,7 @@ def check_energy_level(screenshot: np.ndarray, screen_width: int, screen_height:
     else:
         return -1, -1
     
-    print(f"Energy: {energy_level:.1f}% | {max_energy:.1f}%")
+    print(f"{energy_level:.1f} | {max_energy:.1f}")
     # print(f"(bar length: {total_energy_length}px, empty: {empty_energy_pixel_count}px)")
     return energy_level, max_energy
 
@@ -774,6 +1119,7 @@ def main():
     print(f"F1: force shutdown")
     print(f"F2: toggle start/stop")
     print("--------------------------------")
+
     # Main loop - check flags for shutdown and running state
     while not SHUTDOWN_FLAG.is_set():
         # Check if bot is paused
@@ -857,17 +1203,25 @@ def main():
         if check_button('assets/buttons/view_results.png', screenshot, region_dict, screen_width, screen_height, "View results button"):
             continue
 
-            # STATE 3: EVENT AREA (could happen at any time)
-        if check_button('assets/icons/event_choice_1.png', screenshot, region_dict, screen_width, screen_height, "Event: choice 1"):
-            continue
+        # STATE 3: EVENT AREA (could happen at any time)
+        region_type = "event_title_region"
+        region_dict = get_search_region(screen_width, screen_height, region_type)
+        cropped_region = crop_region(screenshot, region_dict)
+        debug_search_area(screenshot.copy(), region_dict)
 
-            # STATE 4: DISCONNECT (could happen at any time)
+        event_title_text = extract_text_with_fuzzy_match(
+            screenshot, region_dict, screen_width, screen_height,
+            expected_options=["Support Card Event", "Main Scenario Event", "Trainee Event"],
+            confidence_threshold=60.0)
+        if event_title_text:
+            print(f"OCR found event: '{event_title_text}'")
+            #TODO: Implement event logic
+            #TODO: Trainee event
+            #TODO: Support card event
+            #TODO: Main scenario event
+        else:
+            print("No event title found")
             
-            # Add a small delay to prevent excessive CPU usage
-            # Adjust this based on your needs (0.5 seconds = 2 screenshots per second)
-            time.sleep(0.5)
-            
-            # Check for shutdown before next iteration
         if SHUTDOWN_FLAG.is_set():
             print("Shutdown flag detected. Exiting main loop...")
             break
