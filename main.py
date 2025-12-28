@@ -11,6 +11,8 @@ import sys
 import easyocr
 import re
 import difflib
+import json
+from pathlib import Path
 # Sometimes template matching returns duplicate matches, false positives that are a few pixels off from the actual match    
 # This function removes them
 def remove_duplicates(matches, pixel_distance=5):
@@ -233,6 +235,14 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip().casefold()
 
 
+def normalize_text_word_order_insensitive(text: str) -> str:
+    # Normalize text and sort words alphabetically for word-order-insensitive matching
+    # Useful when OCR reads words in wrong order (e.g., "may you" vs "you may")
+    normalized = normalize_text(text)
+    words = sorted(normalized.split())  # Sort words alphabetically
+    return " ".join(words)
+
+
 def preprocess_for_ocr_method1(image: np.ndarray, scale_factor: float = 2.0) -> np.ndarray:
     # First preprocessing method: grayscale + adaptive threshold
     # Similar to reference's enhance_image_for_ocr
@@ -332,6 +342,8 @@ def _get_text_with_confidence(processed_image: np.ndarray, allowlist: str | None
         # Convert confidence threshold from 0-100 to 0-1 for EasyOCR
         easyocr_threshold = confidence_threshold / 100.0 if confidence_threshold > 0 else 0.0
         
+        text_results = []  # Store (text, confidence, bbox) tuples for sorting
+        
         for (bbox, text, conf) in results:
             text = text.strip()
             # EasyOCR confidence is 0.0-1.0, convert to 0-100
@@ -343,11 +355,24 @@ def _get_text_with_confidence(processed_image: np.ndarray, allowlist: str | None
                     # Filter out characters not in allowlist, keep spaces for readability
                     filtered_text = "".join(c if c in allowlist or c.isspace() else "" for c in text).strip()
                     if filtered_text:  # Only add if there's text after filtering
-                        texts.append(filtered_text)
-                        confidences.append(conf_percent)
+                        text_results.append((filtered_text, conf_percent, bbox))
                 else:
-                    texts.append(text)
-                    confidences.append(conf_percent)
+                    text_results.append((text, conf_percent, bbox))
+        
+        # Sort by position: top-to-bottom, then left-to-right
+        # bbox format: [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+        # Use top-left corner (min y, then min x) for sorting
+        def get_sort_key(item):
+            text, conf, bbox = item
+            # Get top-left corner (minimum y, then minimum x)
+            top_left = min(bbox, key=lambda p: (p[1], p[0]))  # (y, x) priority
+            return (top_left[1], top_left[0])  # Sort by y first, then x
+        
+        text_results.sort(key=get_sort_key)
+        
+        # Extract texts and confidences after sorting
+        texts = [item[0] for item in text_results]
+        confidences = [item[1] for item in text_results]
         
         extracted_text = " ".join(texts)
         avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
@@ -361,10 +386,12 @@ def _get_text_with_confidence(processed_image: np.ndarray, allowlist: str | None
 
 
 def extract_text_improved(screenshot: np.ndarray, region: dict, screen_width: int, screen_height: int,
-                          allowlist: str | None = None, confidence_threshold: float = 0.0) -> tuple[str, float]:
+                          allowlist: str | None = None, confidence_threshold: float = 0.0, 
+                          save_debug: bool = False) -> tuple[str, float]:
     # Improved OCR extraction using multiple preprocessing strategies (based on reference codebase)
     # Tries multiple preprocessing methods and picks the result with highest total confidence
     # Heavier but more accurate than single-method extraction
+    # save_debug: Save processed images to test_images/ for debugging OCR issues
     
     cropped = crop_region(screenshot, region)
     scale_factor = 2.0
@@ -378,21 +405,34 @@ def extract_text_improved(screenshot: np.ndarray, region: dict, screen_width: in
         new_height = int(height * scale_factor)
         processed_raw = cv2.resize(processed_raw, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
     
+    if save_debug:
+        cv2.imwrite("test_images/ocr_debug_raw.png", processed_raw)
+    
     result_raw = _get_text_with_confidence(processed_raw, allowlist, confidence_threshold)
     if result_raw[0]:  # If we got text
         all_results.append(result_raw)
+        if save_debug:
+            print(f"OCR method: raw, text: '{result_raw[0]}', confidence: {result_raw[1]:.1f}%")
     
     # Try method 1: adaptive threshold
     processed1 = preprocess_for_ocr_method1(cropped, scale_factor)
+    if save_debug:
+        cv2.imwrite("test_images/ocr_debug_adaptive.png", processed1)
     result1 = _get_text_with_confidence(processed1, allowlist, confidence_threshold)
     if result1[0]:
         all_results.append(result1)
+        if save_debug:
+            print(f"OCR method: adaptive, text: '{result1[0]}', confidence: {result1[1]:.1f}%")
     
     # Try method 2: Otsu threshold
     processed2 = preprocess_for_ocr_method2(cropped, scale_factor)
+    if save_debug:
+        cv2.imwrite("test_images/ocr_debug_otsu.png", processed2)
     result2 = _get_text_with_confidence(processed2, allowlist, confidence_threshold)
     if result2[0]:
         all_results.append(result2)
+        if save_debug:
+            print(f"OCR method: otsu, text: '{result2[0]}', confidence: {result2[1]:.1f}%")
     
     # Pick the result with highest confidence
     if all_results:
@@ -400,6 +440,8 @@ def extract_text_improved(screenshot: np.ndarray, region: dict, screen_width: in
         final_text = best_result[0]
         # Normalize spaces and strip extra whitespace (like reference codebase)
         final_text = " ".join(final_text.split())
+        if save_debug:
+            print(f"Best OCR result: '{final_text}' (confidence: {best_result[1]:.1f}%)")
         return final_text, best_result[1]
     
     return "", 0.0
@@ -504,9 +546,105 @@ def extract_percent_from_region(screenshot: np.ndarray, region: dict, screen_wid
     return value if value >= 5 else None
 
 
+def load_event_names(json_path: str) -> list[str]:
+    # Load all event names from JSON files for OCR matching
+    # Extracts event names (second-level keys) from main_event.json, support_events.json, and uma_events.json
+    # Ignores top-level keys (scenario/character/support card names) as per requirements
+    event_names: set[str] = set()
+    json_files = [
+        "event_chooser/main_event.json",
+        "event_chooser/support_events.json",
+        "event_chooser/trainee_events.json"
+    ]
+    
+    if json_path in json_files:
+        file_path = Path(json_path)
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # Iterate through top-level keys (scenario/character/support card names)
+            # Then collect all second-level keys (actual event names)
+            for top_level_key, events_dict in data.items():
+                if isinstance(events_dict, dict):
+                    # events_dict contains event names as keys
+                    for event_name in events_dict.keys():
+                        event_names.add(event_name)
+        
+        except Exception as e:
+            print(f"Error loading {json_path}: {e}")
+    
+    print("loaded event names: ", event_names)
+    return sorted(list(event_names))  # Return sorted list for consistent ordering
+
+
+def get_selected_choice_icon_path(event_name: str, event_type: str) -> str | None:
+    # Get the icon path for the selected choice of an event
+    # event_name: The name of the event (e.g., "A Team at Last", "Premeditated Mischief")
+    # event_type: "Main Scenario Event", "Support Card Event", or "Trainee Event"
+    # Returns: Filepath like "assets/icons/event_choice_orange.png" or "assets/icons/event_choice_green.png"
+    #          Returns None if event not found or no selected choice
+    
+    # Map event type to JSON file path
+    json_file_map = {
+        "Main Scenario Event": "event_chooser/main_event.json",
+        "Support Card Event": "event_chooser/support_events.json",
+        "Trainee Event": "event_chooser/trainee_events.json"
+    }
+    
+    json_path = json_file_map.get(event_type)
+    if not json_path:
+        print(f"Unknown event type: {event_type}")
+        return None
+    
+    file_path = Path(json_path)
+    if not file_path.exists():
+        print(f"Event JSON file not found: {json_path}")
+        return None
+    
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # Normalize event name for matching (case-insensitive, strip whitespace)
+        normalized_event_name = event_name.strip().casefold()
+        
+        # Search through all top-level keys (scenario/character/support card names)
+        # Then search through second-level keys (event names)
+        for top_level_key, events_dict in data.items():
+            if not isinstance(events_dict, dict):
+                continue
+            
+            for event_key, event_data in events_dict.items():
+                # Normalize for comparison
+                if event_key.strip().casefold() == normalized_event_name:
+                    # Found the event, now find the selected choice
+                    stats = event_data.get("stats", {})
+                    
+                    for choice_num, choice_stats in stats.items():
+                        if isinstance(choice_stats, dict) and choice_stats.get("selected") is True:
+                            tag = choice_stats.get("tag")
+                            if tag in ["green", "orange"]:
+                                icon_path = f"assets/icons/event_choice_{tag}.png"
+                                print(f"Found selected choice for '{event_name}': choice {choice_num} with tag '{tag}'")
+                                return icon_path
+                    
+                    # No selected choice found
+                    print(f"Event '{event_name}' found but no choice marked as selected")
+                    return None
+        
+        # Event not found
+        print(f"Event '{event_name}' not found in {json_path}")
+        return None
+        
+    except Exception as e:
+        print(f"Error loading event data from {json_path}: {e}")
+        return None
+
+
 def extract_text_with_fuzzy_match(screenshot: np.ndarray, region: dict, screen_width: int, screen_height: int,
                                   expected_options: list[str], confidence_threshold: float = 60.0,
-                                  fuzzy_cutoff: float = 0.92) -> str | None:
+                                  fuzzy_cutoff: float = 0.92, save_debug: bool = False) -> str | None:
     # Extract text and match against expected options using fuzzy matching
     # Based on reference codebase's check_unity approach
     # Useful for matching known text like "Training", "Race Day", etc.
@@ -514,37 +652,71 @@ def extract_text_with_fuzzy_match(screenshot: np.ndarray, region: dict, screen_w
     # fuzzy_cutoff: Similarity threshold for fuzzy matching (0.92 = 92% like reference)
     text, confidence = extract_text_improved(
         screenshot, region, screen_width, screen_height,
-        confidence_threshold=confidence_threshold
+        confidence_threshold=confidence_threshold,
+        save_debug=save_debug
     )
 
     if not text or confidence < confidence_threshold:
+        print(f"OCR extraction failed or low confidence: '{text}' (confidence: {confidence:.1f}%)")
         return None
+    
+    # Debug: Print raw OCR output before normalization
+    print(f"OCR raw text: '{text}' (confidence: {confidence:.1f}%)")
     
     # Normalize text using reference codebase's normalization function
     normalized_text = normalize_text(text)
+    print(f"OCR normalized: '{normalized_text}'")
     
     # Build normalized lookup of allowed options (like reference codebase)
     canon_by_norm = {normalize_text(opt): opt for opt in expected_options}
     
-    # Exact match first
+    # Exact match first (case-insensitive, space-normalized)
     if normalized_text in canon_by_norm:
-        print(f"Exact match found: '{normalized_text}' (confidence: {confidence:.1f}%)")
+        print(f"Exact match found: '{normalized_text}' -> '{canon_by_norm[normalized_text]}'")
         return canon_by_norm[normalized_text]
     
-    # Fuzzy match with high threshold (like reference codebase: 0.92 = 92% similarity)
+    # Try word-order-insensitive matching for OCR word order errors
+    # This handles cases like "may you advise me" vs "you may advise me"
+    normalized_word_order = normalize_text_word_order_insensitive(text)
+    canon_by_word_order = {normalize_text_word_order_insensitive(opt): opt for opt in expected_options}
+    
+    if normalized_word_order in canon_by_word_order:
+        print(f"Word-order-insensitive match found: '{normalized_text}' -> '{canon_by_word_order[normalized_word_order]}'")
+        return canon_by_word_order[normalized_word_order]
+    
+    # Fuzzy match with adjustable threshold
+    # For longer event names, use slightly lower threshold to handle OCR errors
+    # Try with original cutoff first
     match = difflib.get_close_matches(normalized_text, canon_by_norm.keys(), n=1, cutoff=fuzzy_cutoff)
     
+    # If no match with strict threshold, try with lower threshold for event names (longer text)
+    if not match and len(normalized_text) > 10:  # Event names are typically longer
+        relaxed_cutoff = max(0.70, fuzzy_cutoff - 0.1)  # Lower threshold but not too low
+        match = difflib.get_close_matches(normalized_text, canon_by_norm.keys(), n=1, cutoff=relaxed_cutoff)
+        if match:
+            similarity = difflib.SequenceMatcher(None, normalized_text, match[0]).ratio()
+            print(f"Relaxed match found: '{normalized_text}' -> '{canon_by_norm[match[0]]}' (similarity: {similarity:.2f})")
+            return canon_by_norm[match[0]]
+    
     if match:
-        print(f"Match found: '{match[0]}' (confidence: {confidence:.1f}%)")
+        similarity = difflib.SequenceMatcher(None, normalized_text, match[0]).ratio()
+        print(f"Match found: '{normalized_text}' -> '{canon_by_norm[match[0]]}' (similarity: {similarity:.2f})")
         return canon_by_norm[match[0]]
     
-    # Debug output (optional)
-    print(f"No match found: '{normalized_text}' (confidence: {confidence:.1f}%)")
+    # Debug output: Show top 3 closest matches for troubleshooting
+    all_matches = difflib.get_close_matches(normalized_text, canon_by_norm.keys(), n=3, cutoff=0.5)
+    if all_matches:
+        print(f"No match found (threshold: {fuzzy_cutoff}). Closest matches:")
+        for m in all_matches:
+            similarity = difflib.SequenceMatcher(None, normalized_text, m).ratio()
+            print(f"  - '{m}' (similarity: {similarity:.2f}) -> '{canon_by_norm[m]}'")
+    else:
+        print(f"No match found: '{normalized_text}' (confidence: {confidence:.1f}%)")
     return None
 
 
 def find_template_in_region(template_path: str, screenshot: np.ndarray, region: dict, screen_width: int, screen_height: int, confidence_threshold: float = 0.8, use_grayscale: bool = False) -> tuple[list[tuple[int, int]], np.ndarray]:
-
+    # path, screenshot, region, screen_width, screen_height, confidence_threshold, use_grayscale
     cropped_region = crop_region(screenshot, region)
     
     target_icon = cv2.imread(template_path)
@@ -1109,6 +1281,18 @@ def check_button(template_path: str, screenshot: np.ndarray, region_dict: dict,
 def main():
     global SHUTDOWN_FLAG, RUNNING_FLAG
     
+    # Load all event names from JSON files once at startup
+    # This list is used for OCR matching of event text
+    support_event_names = load_event_names("event_chooser/support_events.json")
+    main_event_names = load_event_names("event_chooser/main_event.json")
+    trainee_event_names = load_event_names("event_chooser/trainee_events.json")
+    if not support_event_names or not main_event_names or not trainee_event_names:
+        print("Warning: No event names loaded from JSON files")
+    else:
+        print(f"Loaded {len(support_event_names)} support event names for matching")
+        print(f"Loaded {len(main_event_names)} main event names for matching")
+        print(f"Loaded {len(trainee_event_names)} trainee event names for matching")
+    
     # Set up global hotkeys
     setup_hotkeys()
     
@@ -1188,8 +1372,17 @@ def main():
         # debug_search_area(screenshot.copy(), region_dict)
 
         # Check for race, thennnnn do specific logic: race -> race -> view result -> next
-        if check_button('assets/buttons/race_btn.png', screenshot, region_dict, screen_width, screen_height, "Race event"):
-            continue
+        if check_button('assets/buttons/race_btn.png', screenshot, region_dict, screen_width, screen_height, "Race event", click=True):
+            # ORDER : race -> race -> view results -> click screen -> next -> next2
+            screenshot = capture_screen(save_debug=True)
+            region_dict = get_search_region(screen_width, screen_height, region_type)
+            cropped_region = crop_region(screenshot, region_dict)
+
+
+            # if check_button('assets/buttons/race_btn.png', screenshot, region_dict, screen_width, screen_height, "Race event", click=True):
+            # Click race again
+            # Click race again
+            
 
         if check_button('assets/buttons/next_btn.png', screenshot, region_dict, screen_width, screen_height, "Next button"):
             continue
@@ -1209,19 +1402,119 @@ def main():
         cropped_region = crop_region(screenshot, region_dict)
         debug_search_area(screenshot.copy(), region_dict)
 
-        event_title_text = extract_text_with_fuzzy_match(
+        event_title = extract_text_with_fuzzy_match(
             screenshot, region_dict, screen_width, screen_height,
             expected_options=["Support Card Event", "Main Scenario Event", "Trainee Event"],
             confidence_threshold=60.0)
-        if event_title_text:
-            print(f"OCR found event: '{event_title_text}'")
+        if event_title:
+            print(f"OCR found event: '{event_title}'")
             #TODO: Implement event logic
-            #TODO: Trainee event
-            #TODO: Support card event
-            #TODO: Main scenario event
+
+            region_type = "event_text_region"
+            region_dict = get_search_region(screen_width, screen_height, region_type)
+            cropped_region = crop_region(screenshot, region_dict)
+            debug_search_area(screenshot.copy(), region_dict)
+
+            if event_title == "Support Card Event":
+                print("Support card event")
+                event_text = extract_text_with_fuzzy_match(
+                    screenshot, region_dict, screen_width, screen_height,
+                    expected_options=support_event_names if support_event_names else [],
+                    confidence_threshold=60.0,
+                    fuzzy_cutoff=0.80)  # Lower threshold for event names (longer text, more OCR errors)
+                
+                if event_text:
+                    print(f"OCR found event text: '{event_text}'")
+                    icon_path = get_selected_choice_icon_path(event_text, event_title)
+                    if icon_path:
+                        print(f"Selected choice icon path: {icon_path}")
+                        region_type = "race_region"
+                        region_dict = get_search_region(screen_width, screen_height, region_type)
+                        cropped_region = crop_region(screenshot, region_dict)
+                        matches, template = find_template_in_region(icon_path, screenshot, region_dict, screen_width, screen_height, confidence_threshold=0.8, use_grayscale=False)
+                        check_button(icon_path, screenshot, region_dict, screen_width, screen_height, "Selected choice icon", click=True)
+
+            elif event_title == "Main Scenario Event":
+                print("Main scenario event")
+                event_text = extract_text_with_fuzzy_match(
+                    screenshot, region_dict, screen_width, screen_height,
+                    expected_options=main_event_names if main_event_names else [],
+                    confidence_threshold=60.0,
+                    fuzzy_cutoff=0.80)  # Lower threshold for event names
+                
+                if event_text:
+                    print(f"OCR found event text: '{event_text}'")
+                    icon_path = get_selected_choice_icon_path(event_text, event_title)
+                    if icon_path:
+                        print(f"Selected choice icon path: {icon_path}")
+                        region_type = "race_region"
+                        region_dict = get_search_region(screen_width, screen_height, region_type)
+                        cropped_region = crop_region(screenshot, region_dict)
+                        check_button(icon_path, screenshot, region_dict, screen_width, screen_height, "Selected choice icon", click=True)
+
+            elif event_title == "Trainee Event":
+                print("Trainee event")
+                event_text = extract_text_with_fuzzy_match(
+                    screenshot, region_dict, screen_width, screen_height,
+                    expected_options=trainee_event_names if trainee_event_names else [],
+                    confidence_threshold=60.0,
+                    fuzzy_cutoff=0.80)  # Lower threshold for event names
+                
+                if event_text:
+                    print(f"OCR found event text: '{event_text}'")
+                    icon_path = get_selected_choice_icon_path(event_text, event_title)
+                    if icon_path:
+                        print(f"Selected choice icon path: {icon_path}")
+                        region_type = "race_region"
+                        region_dict = get_search_region(screen_width, screen_height, region_type)
+                        cropped_region = crop_region(screenshot, region_dict)
+                        check_button(icon_path, screenshot, region_dict, screen_width, screen_height, "Selected choice icon", click=True)
+
         else:
             print("No event title found")
-            
+
+
+
+        # STATE 4: RETRY AREA (could happen at any time)
+        screenshot = capture_screen(save_debug=True)
+        region_type = "race_region"
+        region_dict = get_search_region(screen_width, screen_height, region_type)
+        cropped_region = crop_region(screenshot, region_dict)
+        # debug_search_area(screenshot.copy(), region_dict)
+        if check_button('assets/buttons/retry_btn.png', screenshot, region_dict, screen_width, screen_height, "Retry button", click=True):
+            continue
+
+
+        # STATE 5: UNITY AREA
+        # Only done once in an entire run but still worth checking
+        if check_button('assets/buttons/close_btn.png', screenshot, region_dict, screen_width, screen_height, "Close button", click=True):
+            continue
+        if check_button('assets/buttons/unity_race_day.png', screenshot, region_dict, screen_width, screen_height, "Unity race day", click=True):
+            time.sleep(1)
+            screenshot = capture_screen(save_debug=True)
+            region_dict = get_search_region(screen_width, screen_height, region_type)
+            cropped_region = crop_region(screenshot, region_dict)
+
+            if check_button('assets/buttons/select_opponent.png', screenshot, region_dict, screen_width, screen_height, "Select opponent", click=True):
+                time.sleep(1)
+                screenshot = capture_screen(save_debug=True)
+                region_dict = get_search_region(screen_width, screen_height, region_type)
+                cropped_region = crop_region(screenshot, region_dict)
+                if check_button('assets/buttons/begin_showdown.png', screenshot, region_dict, screen_width, screen_height, "begin showdown button", click=True):
+                    time.sleep(2)
+                    screenshot = capture_screen(save_debug=True)
+                    region_dict = get_search_region(screen_width, screen_height, region_type)
+                    cropped_region = crop_region(screenshot, region_dict)
+                    check_button('assets/buttons/see_all_race_results.png', screenshot, region_dict, screen_width, screen_height, "Close button", click=True)
+                    # Then find the skip button
+                    # then find the next button
+                    # then find the next2 button
+                    # Wait a couple of seconds, then find the next button
+
+            continue
+
+
+
         if SHUTDOWN_FLAG.is_set():
             print("Shutdown flag detected. Exiting main loop...")
             break

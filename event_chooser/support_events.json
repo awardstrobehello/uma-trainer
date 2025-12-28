@@ -1,0 +1,269 @@
+{
+    "Sweep Tosho SR": {
+        "Some Very Green Friends": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green",
+                    "selected": true
+                },
+                "2": {
+                    "tag": "orange"
+                }
+            }
+        },
+        "Premeditated Mischief": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green",
+                    "selected": true
+                },
+                "2": {
+                    "tag": "orange"
+                }
+            }
+        },
+        "Miracle ☆ Escape!": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green",
+                    "selected": true
+                },
+                "2": {
+                    "tag": "orange"
+                }
+            }
+        },
+        "Wonderful ☆ Mistake!": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green"
+                },
+                "2": {
+                    "tag": "orange",
+                    "selected": true
+                }
+            }
+        }
+    },
+    "Eishin Flash SR": {
+        "Unforeseen Lunch": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green",
+                    "selected": true
+                },
+                "2": {
+                    "tag": "orange"
+                }
+            }
+        },
+        "Responding to the Unforeseen": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green"
+                },
+                "2": {
+                    "tag": "orange",
+                    "selected": true
+                }
+            }
+        }
+    },
+    "King Halo SSR": {
+        "A Captivating Invitation": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green"
+                },
+                "2": {
+                    "tag": "orange",
+                    "selected": true
+                }
+            }
+        },
+        "Dancer's Pride": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green"
+                },
+                "2": {
+                    "tag": "orange",
+                    "selected": true
+                }
+            }
+        },
+        "You May Socialize With Me!": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green",
+                    "selected": true
+                },
+                "2": {
+                    "tag": "orange"
+                }
+            }
+        },
+        "You May Advise Me!": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green"
+                },
+                "2": {
+                    "tag": "orange",
+                    "selected": true
+                }
+            }
+        }
+    },
+    "Hishi Amazon SR": {
+        "Hishiama's Struggles: Problem Children": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green",
+                    "selected": true
+                },
+                "2": {
+                    "tag": "orange"
+                }
+            }
+        },
+        "Hishiama's Struggles: Final Stretch": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green"
+                },
+                "2": {
+                    "tag": "orange",
+                    "selected": true
+                }
+            }
+        }
+    },
+    "Narita Taishin SR": {
+        "Just Leave Me Alone": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green",
+                    "selected": true
+                },
+                "2": {
+                    "tag": "orange"
+                }
+            }
+        },
+        "Just Don't Bother Me": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green"
+                },
+                "2": {
+                    "tag": "orange",
+                    "selected": true
+                }
+            }
+        }
+    },
+    "Yaeno Muteki SSR": {
+        "A Reasonable Diet vs. an Explosive Diet": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green",
+                    "selected": true
+                },
+                "2": {
+                    "tag": "orange"
+                }
+            }
+        },
+        "Firm and Plain, Yet Close to Virtue": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green"
+                },
+                "2": {
+                    "tag": "orange",
+                    "selected": true
+                }
+            }
+        },
+        "The Will to Protect!": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green",
+                    "selected": true
+                },
+                "2": {
+                    "tag": "orange"
+                }
+            }
+        }
+    }
+}

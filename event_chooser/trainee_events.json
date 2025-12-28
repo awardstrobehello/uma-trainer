@@ -1,0 +1,331 @@
+{
+  "Global": {
+    "Failed training (Get Well Soon!)": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green"
+        },
+        "2": {
+          "tag": "orange",
+          "selected": true
+        }
+      }
+    },
+    "Failed training (Don't Overdo It!)": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green",
+          "selected": true
+        },
+        "2": {
+          "tag": "orange"
+        }
+      }
+    },
+    "Extra Training": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green"
+        },
+        "2": {
+          "tag": "orange",
+          "selected": true
+        }
+      }
+    },
+    "At Summer Camp (Year 2)": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green",
+          "selected": true
+        },
+        "2": {
+          "tag": "orange"
+        }
+      }
+    },
+    "Dance Lesson": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green"
+        },
+        "2": {
+          "tag": "orange",
+          "selected": true
+        }
+      }
+    },
+    "New Year's Resolutions": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Middle choice",
+        "3": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green",
+          "selected": true
+        },
+        "2": {
+          "tag": "orange"
+        },
+        "3": {
+          "tag": "pink"
+        }
+      }
+    },
+    "New Year's Shrine Visit": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Middle choice",
+        "3": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green",
+          "selected": true
+        },
+        "2": {
+          "tag": "orange"
+        },
+        "3": {
+          "tag": "orange"
+        }
+      }
+    },
+    "Acupuncture (Just an Acupuncturist, No Worries! ☆)": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Middle choice",
+        "3": "Middle choice",
+        "4": "Middle choice",
+        "5": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green"
+        },
+        "2": {
+          "tag": "orange"
+        },
+        "3": {
+          "tag": "orange",
+          "selected": true
+        },
+        "4": {
+          "tag": "orange"
+        },
+        "5": {
+          "tag": "orange"
+        }
+      }
+    }
+  },
+
+  "Meijiro Ryan": {
+    "My Signature Racewear": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green"
+        },
+        "2": {
+          "tag": "orange",
+          "selected": true
+        }
+      }
+    },
+    "Heart-Pounding Aquarium": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green"
+        },
+        "2": {
+          "tag": "orange",
+          "selected": true
+        }
+      }
+    },
+    "Refreshingly Real": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green",
+          "selected": true
+        },
+        "2": {
+          "tag": "orange"
+        }
+      }
+    },
+    "Muscle Jealousy": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green"
+        },
+        "2": {
+          "tag": "orange",
+          "selected": true
+        }
+      }
+    },
+    "The Pony Girl and the Wolf Prince": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green"
+        },
+        "2": {
+          "tag": "orange",
+          "selected": true
+        }
+      }
+    },
+    "Real Gains": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green"
+        },
+        "2": {
+          "tag": "orange",
+          "selected": true
+        }
+      }
+    },
+    "Rest Day": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green"
+        },
+        "2": {
+          "tag": "orange",
+          "selected": true
+        }
+      }
+    },
+    "Nerve-Racking Rest Time": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green",
+          "selected": true
+        },
+        "2": {
+          "tag": "orange"
+        }
+      }
+    },
+    "Flush with Feelings": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green"
+        },
+        "2": {
+          "tag": "orange",
+          "selected": true
+        }
+      }
+    },
+    "With Relaxation and Trust Comes...": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Middle choice",
+        "3": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green",
+          "selected": true
+        },
+        "2": {
+          "tag": "green"
+        },
+        "3": {
+          "tag": "orange"
+        }
+      }
+    },
+    "Ryan to the Rescue!": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green",
+          "selected": true
+        },
+        "2": {
+          "tag": "orange"
+        }
+      }
+    },
+    "The Little Fans of the Umadol": {
+      "choices": {
+        "1": "Top choice",
+        "2": "Bottom choice"
+      },
+      "stats": {
+        "1": {
+          "tag": "green",
+          "selected": true
+        },
+        "2": {
+          "tag": "green"
+        }
+      }
+    }
+  }
+}

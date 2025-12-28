@@ -1,0 +1,19 @@
+{
+    "Unity Cup":{
+        "A Team at Last": {
+            "choices": {
+                "1": "Top choice",
+                "2": "Bottom choice"
+            },
+            "stats": {
+                "1": {
+                    "tag": "green"
+                },
+                "2": {
+                    "tag": "orange",
+                    "selected": true
+                }
+            }
+        }
+    }
+}
